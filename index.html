@@ -209,6 +209,32 @@ header p  { opacity: 0.8; font-size: 1rem; }
   min-height: 90px;
 }
 .cmd-body .placeholder { color: #475569; font-style: italic; font-family: inherit; }
+.cmd-body.hidden { display: none; }
+
+/* Command tabs */
+.cmd-tabs { display: flex; gap: 0.35rem; }
+.cmd-tab {
+  padding: 0.28rem 0.75rem;
+  background: rgba(255,255,255,0.08); color: #94a3b8;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 5px;
+  font-family: inherit; font-size: 0.75rem; font-weight: 600;
+  cursor: pointer; transition: background 0.14s, color 0.14s;
+}
+.cmd-tab:hover  { background: rgba(255,255,255,0.14); color: #cbd5e1; }
+.cmd-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* Indexing metadata in analysis panel */
+.idx-section { margin-top: 0.9rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
+.idx-meta-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 0.4rem 1rem; margin: 0.45rem 0 0.6rem;
+}
+.idx-meta-item { font-size: 0.8rem; line-height: 1.4; }
+.idx-meta-item .meta-label { font-weight: 700; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.idx-meta-item .meta-val   { color: var(--text); }
+.idx-outputs { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.5rem; line-height: 1.5; }
+
 /* Syntax colours */
 .c-comment { color: #475569; font-style: italic; }
 .c-tool    { color: #fbbf24; font-weight: 700; }
@@ -261,6 +287,47 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .note.info    { background: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; }
 .note.warn    { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .note.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+
+/* ── Citations ── */
+.citations {
+  max-width: 1300px;
+  margin: 0 auto 3rem;
+  padding: 0 1.5rem;
+}
+.citations-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.citations-header {
+  padding: 0.9rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem; font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  user-select: none;
+}
+.citations-header:hover { background: var(--bg); }
+.citations-toggle { color: var(--muted); font-size: 0.8rem; }
+.citations-body { padding: 1.1rem 1.25rem; display: none; }
+.citations-body.open { display: block; }
+.cite-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.cite-table th {
+  text-align: left; padding: 0.4rem 0.75rem;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted);
+  border-bottom: 2px solid var(--border);
+}
+.cite-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+.cite-table tr:last-child td { border-bottom: none; }
+.cite-table tr:hover td { background: var(--bg); }
+.cite-tool { font-weight: 700; color: var(--primary); white-space: nowrap; }
+.cite-ref  { color: var(--text); }
+.cite-ref a { color: var(--primary); text-decoration: none; }
+.cite-ref a:hover { text-decoration: underline; }
+.cite-journal { color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body>
@@ -335,10 +402,16 @@ header p  { opacity: 0.8; font-size: 1rem; }
 
     <div class="cmd-card">
       <div class="cmd-header">
-        <span>Generated Command</span>
+        <div class="cmd-tabs">
+          <button class="cmd-tab active" id="tab-btn-index" onclick="switchTab('index')">1. Index</button>
+          <button class="cmd-tab"        id="tab-btn-align" onclick="switchTab('align')">2. Align</button>
+        </div>
         <button class="copy-btn" id="copy-btn" onclick="copyCmd()">Copy</button>
       </div>
-      <div class="cmd-body" id="cmd-out">
+      <div class="cmd-body" id="cmd-index">
+        <span class="placeholder">Make selections to build your command →</span>
+      </div>
+      <div class="cmd-body hidden" id="cmd-align">
         <span class="placeholder">Make selections to build your command →</span>
       </div>
     </div>
@@ -353,6 +426,97 @@ header p  { opacity: 0.8; font-size: 1rem; }
   </div><!-- /sidebar -->
 </div><!-- /layout -->
 
+<!-- ══════════════ CITATIONS ══════════════ -->
+<div class="citations">
+  <div class="citations-card">
+    <div class="citations-header" onclick="toggleCitations()">
+      <span>How to cite these tools</span>
+      <span class="citations-toggle" id="cite-toggle">Show ▾</span>
+    </div>
+    <div class="citations-body" id="citations-body">
+      <table class="cite-table">
+        <thead>
+          <tr><th>Tool</th><th>Citation</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cite-tool">BWA-MEM2</td>
+            <td class="cite-ref">
+              Vasimuddin M, Misra S, Li H, Aluru S. <em>Efficient Architecture-Aware Acceleration of BWA-MEM for Multicore Systems.</em>
+              IEEE IPDPS, 2019.
+              <a href="https://doi.org/10.1109/IPDPS.2019.00041" target="_blank">doi:10.1109/IPDPS.2019.00041</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">BWA-MEM</td>
+            <td class="cite-ref">
+              Li H. <em>Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM.</em>
+              arXiv:1303.3997, 2013.
+              <a href="https://arxiv.org/abs/1303.3997" target="_blank">arxiv:1303.3997</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Bowtie2</td>
+            <td class="cite-ref">
+              Langmead B, Salzberg SL. <em>Fast gapped-read alignment with Bowtie 2.</em>
+              <span class="cite-journal">Nature Methods</span> 9, 357–359, 2012.
+              <a href="https://doi.org/10.1038/nmeth.1923" target="_blank">doi:10.1038/nmeth.1923</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Minimap2</td>
+            <td class="cite-ref">
+              Li H. <em>Minimap2: pairwise alignment for nucleotide sequences.</em>
+              <span class="cite-journal">Bioinformatics</span> 34(18):3094–3100, 2018.
+              <a href="https://doi.org/10.1093/bioinformatics/bty191" target="_blank">doi:10.1093/bioinformatics/bty191</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">STAR</td>
+            <td class="cite-ref">
+              Dobin A, et al. <em>STAR: ultrafast universal RNA-seq aligner.</em>
+              <span class="cite-journal">Bioinformatics</span> 29(1):15–21, 2013.
+              <a href="https://doi.org/10.1093/bioinformatics/bts635" target="_blank">doi:10.1093/bioinformatics/bts635</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">HISAT2</td>
+            <td class="cite-ref">
+              Kim D, et al. <em>Graph-based genome alignment and genotyping with HISAT2 and HISAT-genotype.</em>
+              <span class="cite-journal">Nature Biotechnology</span> 37, 907–915, 2019.
+              <a href="https://doi.org/10.1038/s41587-019-0201-4" target="_blank">doi:10.1038/s41587-019-0201-4</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Salmon</td>
+            <td class="cite-ref">
+              Patro R, et al. <em>Salmon provides fast and bias-aware quantification of transcript expression.</em>
+              <span class="cite-journal">Nature Methods</span> 14, 417–419, 2017.
+              <a href="https://doi.org/10.1038/nmeth.4197" target="_blank">doi:10.1038/nmeth.4197</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Kallisto</td>
+            <td class="cite-ref">
+              Bray NL, et al. <em>Near-optimal probabilistic RNA-seq quantification.</em>
+              <span class="cite-journal">Nature Biotechnology</span> 34, 525–527, 2016.
+              <a href="https://doi.org/10.1038/nbt.3519" target="_blank">doi:10.1038/nbt.3519</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">samtools</td>
+            <td class="cite-ref">
+              Danecek P, et al. <em>Twelve years of SAMtools and BCFtools.</em>
+              <span class="cite-journal">GigaScience</span> 10(2):giab008, 2021.
+              <a href="https://doi.org/10.1093/gigascience/giab008" target="_blank">doi:10.1093/gigascience/giab008</a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════════════════
    STATE
@@ -361,6 +525,7 @@ const S = {
   expType:   null,
   tech:      null,
   aligner:   null,
+  activeTab: 'index',
   // files & index
   ref:           'reference.fa',
   refIdx:        'genome_index',
@@ -406,6 +571,12 @@ const ALIGNERS = {
     ],
     best: 'Illumina WGS/WES, GATK variant calling pipelines',
     notes: [],
+    idx: {
+      cmd: s => `bwa-mem2 index ${s.ref}`,
+      mem: '~60 GB peak', time: '~2 h (human genome)',
+      outputs: '${ref}.0123, .amb, .ann, .bwt.2bit.64, .pac',
+      note: 'Index is NOT compatible with BWA-MEM — must be rebuilt when switching tools.',
+    },
   },
   'bwa-mem': {
     label: 'BWA-MEM', tags: ['popular'],
@@ -425,6 +596,18 @@ const ALIGNERS = {
     ],
     best: 'Illumina WGS/WES; validated clinical workflows requiring mature tools',
     notes: [],
+    idx: {
+      cmd: s => {
+        let c = `bwa index ${s.ref}`;
+        if (s.tech === 'pacbio' || s.tech === 'ont') {
+          c += `\n\n# For genomes >2 Gb, use the BWT-SW algorithm:\n# bwa index -a bwtsw ${s.ref}`;
+        }
+        return c;
+      },
+      mem: '~5 GB', time: '~2 h (human genome)',
+      outputs: '${ref}.amb, .ann, .bwt, .pac, .sa',
+      note: 'For genomes larger than 2 Gb, add -a bwtsw to use the BWT-SW algorithm instead of IS.',
+    },
   },
   'bowtie2': {
     label: 'Bowtie2', tags: ['memory'],
@@ -444,6 +627,12 @@ const ALIGNERS = {
     ],
     best: 'ChIP-seq, ATAC-seq, CUT&RUN, epigenomics, re-sequencing with small genomes',
     notes: [],
+    idx: {
+      cmd: s => `bowtie2-build -p ${s.threads} ${s.ref} ${s.refIdx}`,
+      mem: '~3 GB', time: '~1 h (human genome)',
+      outputs: '${index}.{1..4}.bt2, ${index}.rev.{1,2}.bt2',
+      note: 'Parallel building with -p requires Bowtie2 ≥ 2.4.1.',
+    },
   },
   'minimap2-pb': {
     label: 'Minimap2 (PacBio)', tags: ['fast'],
@@ -462,6 +651,15 @@ const ALIGNERS = {
     ],
     best: 'PacBio WGS, structural variant detection, de novo assembly polishing',
     notes: [],
+    idx: {
+      cmd: s => {
+        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\n# HiFi / CCS reads:\nminimap2 -ax map-hifi -d ${mmi} ${s.ref}\n\n# CLR reads:\n# minimap2 -ax map-pb -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
+      },
+      mem: '~20 GB', time: '~10 min (human genome)',
+      outputs: 'Single binary .mmi file (~20 GB for human)',
+      note: 'Optional. Most useful in multi-sample projects to avoid re-indexing per run.',
+    },
   },
   'minimap2-ont': {
     label: 'Minimap2 (ONT)', tags: ['fast'],
@@ -480,6 +678,15 @@ const ALIGNERS = {
     ],
     best: 'ONT WGS, structural variant detection, methylation analysis, metagenomics',
     notes: [],
+    idx: {
+      cmd: s => {
+        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\nminimap2 -ax map-ont -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
+      },
+      mem: '~20 GB', time: '~10 min (human genome)',
+      outputs: 'Single binary .mmi file (~20 GB for human)',
+      note: 'Optional. Most useful in multi-sample projects to avoid re-indexing per run.',
+    },
   },
   'star': {
     label: 'STAR', tags: ['popular','fast'],
@@ -500,6 +707,12 @@ const ALIGNERS = {
     ],
     best: 'Standard RNA-seq DE analysis, junction discovery, ENCODE-style pipelines',
     notes: [],
+    idx: {
+      cmd: s => `STAR --runMode genomeGenerate \\\n  --genomeDir ${s.genomeDir} \\\n  --genomeFastaFiles ${s.ref} \\\n  --sjdbGTFfile annotation.gtf \\\n  --runThreadN ${s.threads}\n\n# For small genomes (<1 Gb) or draft assemblies, add:\n# --genomeSAindexNbases 11`,
+      mem: '~30 GB', time: '~30 min (human genome)',
+      outputs: 'Directory: Genome, SA, SAindex, chrName.txt, sjdbInfo.txt, genomeParameters.txt, etc.',
+      note: 'Requires a GTF annotation file alongside the genome FASTA. Rebuild if the GTF changes. Use --genomeSAindexNbases 11 for small or draft genomes.',
+    },
   },
   'hisat2': {
     label: 'HISAT2', tags: ['memory'],
@@ -519,6 +732,12 @@ const ALIGNERS = {
     ],
     best: 'RNA-seq on memory-constrained systems; StringTie/featureCounts downstream',
     notes: [],
+    idx: {
+      cmd: s => `# Basic index\nhisat2-build -p ${s.threads} ${s.ref} ${s.refIdx}\n\n# Optional: splice-site aware index (improves sensitivity for known junctions)\nhisat2_extract_splice_sites.py annotation.gtf > splice_sites.txt\nhisat2_extract_exons.py annotation.gtf > exons.txt\nhisat2-build -p ${s.threads} \\\n  --ss splice_sites.txt --exon exons.txt \\\n  ${s.ref} ${s.refIdx}`,
+      mem: '~8 GB', time: '~1 h (human genome)',
+      outputs: '${index}.{1..8}.ht2',
+      note: 'Splice-site-aware index (optional) encodes known junctions from a GTF, improving sensitivity for annotated transcripts.',
+    },
   },
   'salmon': {
     label: 'Salmon', tags: ['popular','fast'],
@@ -539,6 +758,12 @@ const ALIGNERS = {
     ],
     best: 'Differential expression analysis, large cohorts, quantification-focused workflows',
     notes: [],
+    idx: {
+      cmd: s => `# Option 1: Simple index\nsalmon index \\\n  -t ${s.txomeFa} \\\n  -i ${s.salmonIdx} \\\n  -p ${s.threads}\n\n# Option 2: Decoy-aware index (recommended — reduces spurious mappings)\n# Requires genome FASTA alongside the transcriptome FASTA\ngrep "^>" ${s.ref} | cut -d " " -f 1 | sed 's/>//' > decoys.txt\ncat ${s.txomeFa} ${s.ref} > gentrome.fa\nsalmon index \\\n  -t gentrome.fa \\\n  -d decoys.txt \\\n  -i ${s.salmonIdx} \\\n  -p ${s.threads}`,
+      mem: '~8 GB', time: '~10 min',
+      outputs: 'Directory: hash.bin, quasi_index.bin, info.json, etc.',
+      note: 'Indexes the transcriptome FASTA — not the genome. Decoy-aware indexing (option 2) uses the genome as background to reduce false quasi-mappings and is recommended for most workflows.',
+    },
   },
   'kallisto': {
     label: 'Kallisto', tags: ['fast'],
@@ -558,6 +783,12 @@ const ALIGNERS = {
     ],
     best: 'Very fast transcript quantification, exploratory analysis, large sample batches',
     notes: [],
+    idx: {
+      cmd: s => `kallisto index -i ${s.kallistoIdx} ${s.txomeFa}`,
+      mem: '~5 GB', time: '~10 min',
+      outputs: 'Single .idx binary file',
+      note: 'Indexes the transcriptome FASTA — not the genome.',
+    },
   },
   'minimap2-rna': {
     label: 'Minimap2 (long-read RNA)', tags: ['fast'],
@@ -577,6 +808,15 @@ const ALIGNERS = {
     ],
     best: 'Full-length isoform sequencing, novel transcript discovery, alternative splicing',
     notes: [],
+    idx: {
+      cmd: s => {
+        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n\n# PacBio Iso-Seq:\nminimap2 -ax splice:hq -d ${mmi} ${s.ref}\n\n# ONT cDNA / direct RNA:\n# minimap2 -ax splice -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
+      },
+      mem: '~20 GB', time: '~10 min (human genome)',
+      outputs: 'Single binary .mmi file',
+      note: 'Optional. Use splice:hq preset index for PacBio Iso-Seq; splice for ONT.',
+    },
   },
 };
 
@@ -789,9 +1029,29 @@ function renderPostProc() {
 }
 
 /* ═══════════════════════════════════════════════════
-   BUILD COMMAND
+   TAB SWITCHING
 ═══════════════════════════════════════════════════ */
-function buildCommand() {
+function switchTab(tab) {
+  S.activeTab = tab;
+  document.getElementById('tab-btn-index').classList.toggle('active', tab === 'index');
+  document.getElementById('tab-btn-align').classList.toggle('active', tab === 'align');
+  document.getElementById('cmd-index').classList.toggle('hidden', tab !== 'index');
+  document.getElementById('cmd-align').classList.toggle('hidden', tab !== 'align');
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD INDEX COMMAND
+═══════════════════════════════════════════════════ */
+function buildIndexCmd() {
+  const al = S.aligner;
+  if (!al || !ALIGNERS[al]?.idx) return null;
+  return ALIGNERS[al].idx.cmd(S);
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD ALIGN COMMAND
+═══════════════════════════════════════════════════ */
+function buildAlignCmd() {
   const al = S.aligner;
   if (!al) return null;
 
@@ -814,63 +1074,39 @@ function buildCommand() {
   switch (al) {
 
     case 'bwa-mem2':
-      lines.push('# Index reference (first time only)');
-      lines.push(`bwa-mem2 index ${REF}`);
-      lines.push('');
-      lines.push('# Align reads');
       lines.push(pipe(`bwa-mem2 mem -t ${T} ${REF} ${reads}`));
       break;
 
     case 'bwa-mem': {
-      const xFlag = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
+      const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
-      lines.push('# Index reference (first time only)');
-      lines.push(`bwa index ${REF}`);
-      lines.push('');
-      lines.push('# Align reads');
       lines.push(pipe(`bwa mem${xFlag} -t ${T} ${REF} ${inReads}`));
       break;
     }
 
     case 'bowtie2': {
       const preset = S.bt2Preset || '--sensitive';
-      const inArg  = S.paired
-        ? `-1 ${R1} -2 ${R2}`
-        : `-U ${R1}`;
-      lines.push('# Build index (first time only)');
-      lines.push(`bowtie2-build ${REF} ${S.refIdx}`);
-      lines.push('');
-      lines.push('# Align reads');
+      const inArg  = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
       lines.push(pipe(`bowtie2 ${preset} -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
       break;
     }
 
     case 'minimap2-pb':
-      lines.push('# Align PacBio reads');
       lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
       lines.push(pipe(`minimap2 -ax map-hifi -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'minimap2-ont':
-      lines.push('# Align Oxford Nanopore reads');
       lines.push(pipe(`minimap2 -ax map-ont -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'star': {
       const sorted = S.sortBam ? 'SortedByCoordinate' : 'Unsorted';
       const gz     = (R1 || '').endsWith('.gz');
-      lines.push('# Build genome index (first time only, ~30 min for human)');
-      lines.push(`STAR --runMode genomeGenerate \\`);
-      lines.push(`  --genomeDir ${S.genomeDir} \\`);
-      lines.push(`  --genomeFastaFiles ${REF} \\`);
-      lines.push(`  --sjdbGTFfile annotation.gtf \\`);
-      lines.push(`  --runThreadN ${T}`);
-      lines.push('');
-      lines.push('# Align reads');
       let star = `STAR --runThreadN ${T} \\\n`;
       star += `  --genomeDir ${S.genomeDir} \\\n`;
       star += `  --readFilesIn ${S.paired ? `${R1} ${R2}` : R1}`;
-      if (gz) star += ` \\\n  --readFilesCommand zcat`;
+      if (gz)              star += ` \\\n  --readFilesCommand zcat`;
       star += ` \\\n  --outSAMtype BAM ${sorted}`;
       star += ` \\\n  --outFileNamePrefix ${OUT}/`;
       if (S.starTwoPass)   star += ` \\\n  --twopassMode Basic`;
@@ -881,29 +1117,17 @@ function buildCommand() {
 
     case 'hisat2': {
       const inArg = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
-      lines.push('# Build index (first time only)');
-      lines.push(`hisat2-build ${REF} ${S.refIdx}`);
-      lines.push('');
-      lines.push('# Align reads');
       lines.push(pipe(`hisat2 -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
       break;
     }
 
     case 'salmon': {
       const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-r ${R1}`;
-      lines.push('# Build index (first time only)');
-      lines.push(`salmon index \\\n  -t ${S.txomeFa} \\\n  -i ${S.salmonIdx} \\\n  -p ${T}`);
-      lines.push('');
-      lines.push('# Quantify');
       lines.push(`salmon quant \\\n  -i ${S.salmonIdx} \\\n  -l ${S.libType || 'A'} \\\n  ${inArg} \\\n  -p ${T} \\\n  --validateMappings \\\n  -o ${OUT}_salmon`);
       break;
     }
 
     case 'kallisto': {
-      lines.push('# Build index (first time only)');
-      lines.push(`kallisto index -i ${S.kallistoIdx} ${S.txomeFa}`);
-      lines.push('');
-      lines.push('# Quantify');
       let kl = `kallisto quant \\\n  -i ${S.kallistoIdx} \\\n  -o ${OUT}_kallisto \\\n  -t ${T}`;
       if (!S.paired) kl += ` \\\n  --single -l 200 -s 20`;
       kl += ` \\\n  ${S.paired ? `${R1} ${R2}` : R1}`;
@@ -912,8 +1136,7 @@ function buildCommand() {
     }
 
     case 'minimap2-rna':
-      lines.push('# Align long-read RNA-seq (splice-aware)');
-      lines.push('# -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
+      lines.push('# Use -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
       lines.push(pipe(`minimap2 -ax splice:hq -t ${T} ${REF} ${LONG}`));
       break;
 
@@ -924,8 +1147,6 @@ function buildCommand() {
   /* ── Post-processing ── */
   const isQuant = ALIGNERS[al]?.quantOnly;
   if (!isQuant) {
-    // STAR handles its own sorting, so skip samtools sort for STAR if sortBam is on
-    const starSorted = (al === 'star' && S.sortBam);
     const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
     const postLines = [];
 
@@ -1025,16 +1246,19 @@ function buildNotes() {
    REFRESH EVERYTHING
 ═══════════════════════════════════════════════════ */
 function refresh() {
-  // Command
-  const cmd = buildCommand();
-  const cmdEl = document.getElementById('cmd-out');
-  if (!cmd) {
-    cmdEl.innerHTML = '<span class="placeholder">Make selections to build your command →</span>';
-  } else {
-    cmdEl.innerHTML = highlight(cmd);
-  }
+  const PLACEHOLDER = '<span class="placeholder">Make selections to build your command →</span>';
 
-  // Analysis
+  // Index tab
+  const idxCmd  = buildIndexCmd();
+  const idxEl   = document.getElementById('cmd-index');
+  idxEl.innerHTML = idxCmd ? highlight(idxCmd) : PLACEHOLDER;
+
+  // Align tab
+  const alignCmd = buildAlignCmd();
+  const alignEl  = document.getElementById('cmd-align');
+  alignEl.innerHTML = alignCmd ? highlight(alignCmd) : PLACEHOLDER;
+
+  // Analysis panel
   const bodyEl = document.getElementById('analysis-body');
   const al = S.aligner;
   if (!al || !ALIGNERS[al]) {
@@ -1042,11 +1266,27 @@ function refresh() {
     return;
   }
 
-  const info = ALIGNERS[al];
+  const info  = ALIGNERS[al];
   const notes = buildNotes();
   const notesHtml = notes.length
     ? `<div class="approach-notes">${notes.map(n=>`<div class="note ${n.type}">${n.text}</div>`).join('')}</div>`
     : '';
+
+  // Indexing requirements section
+  let idxSection = '';
+  if (info.idx) {
+    const ix = info.idx;
+    idxSection = `
+      <div class="idx-section">
+        <div class="list-head" style="color:var(--muted);">Indexing requirements</div>
+        <div class="idx-meta-grid">
+          <div class="idx-meta-item"><div class="meta-label">Memory</div><div class="meta-val">${ix.mem}</div></div>
+          <div class="idx-meta-item"><div class="meta-label">Build time</div><div class="meta-val">${ix.time}</div></div>
+        </div>
+        <div class="idx-outputs"><strong>Output files:</strong> ${ix.outputs}</div>
+        <div class="note info">${ix.note}</div>
+      </div>`;
+  }
 
   bodyEl.innerHTML = `
     <div class="a-name">${info.label}</div>
@@ -1056,6 +1296,7 @@ function refresh() {
     <div class="list-head con">Cons</div>
     <ul class="con-list">${info.cons.map(c=>`<li>${c}</li>`).join('')}</ul>
     <div class="best-for"><strong>Best for:</strong> ${info.best}</div>
+    ${idxSection}
     ${notesHtml}`;
 }
 
@@ -1063,7 +1304,7 @@ function refresh() {
    COPY
 ═══════════════════════════════════════════════════ */
 function copyCmd() {
-  const cmd = buildCommand();
+  const cmd = S.activeTab === 'index' ? buildIndexCmd() : buildAlignCmd();
   if (!cmd) return;
   navigator.clipboard.writeText(cmd).then(() => {
     const btn = document.getElementById('copy-btn');
@@ -1071,6 +1312,16 @@ function copyCmd() {
     btn.classList.add('success');
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('success'); }, 2000);
   });
+}
+
+/* ═══════════════════════════════════════════════════
+   CITATIONS TOGGLE
+═══════════════════════════════════════════════════ */
+function toggleCitations() {
+  const body   = document.getElementById('citations-body');
+  const toggle = document.getElementById('cite-toggle');
+  const open   = body.classList.toggle('open');
+  toggle.textContent = open ? 'Hide ▴' : 'Show ▾';
 }
 
 /* ── tiny XSS-safe escape for attribute values ── */
