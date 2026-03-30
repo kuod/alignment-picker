@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alignment Picker — DNA &amp; RNA-seq</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
 :root {
   --primary: #2563eb;
@@ -288,6 +289,34 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .note.warn    { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .note.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
 
+/* ── Data Flow Diagram ── */
+.diagram-section {
+  max-width: 1300px;
+  margin: 0 auto 1.5rem;
+  padding: 0 1.5rem;
+}
+.diagram-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.diagram-header {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem; font-weight: 700;
+  color: var(--text);
+}
+.diagram-aligner { color: var(--primary); }
+.diagram-body {
+  padding: 1.25rem;
+  overflow-x: auto;
+  min-height: 100px;
+  display: flex; align-items: center; justify-content: center;
+}
+.diagram-body svg { max-width: 100%; height: auto; display: block; }
+.diagram-placeholder { color: var(--muted); font-size: 0.875rem; font-style: italic; }
+
 /* ── Citations ── */
 .citations {
   max-width: 1300px;
@@ -425,6 +454,18 @@ header p  { opacity: 0.8; font-size: 1rem; }
 
   </div><!-- /sidebar -->
 </div><!-- /layout -->
+
+<!-- ══════════════ DATA FLOW DIAGRAM ══════════════ -->
+<div class="diagram-section" id="diagram-section" style="display:none">
+  <div class="diagram-card">
+    <div class="diagram-header">
+      Data Flow — <span class="diagram-aligner" id="diagram-aligner-name"></span>
+    </div>
+    <div class="diagram-body" id="diagram-body">
+      <p class="diagram-placeholder">Select an aligner to see the data flow diagram.</p>
+    </div>
+  </div>
+</div>
 
 <!-- ══════════════ CITATIONS ══════════════ -->
 <div class="citations">
@@ -1298,6 +1339,8 @@ function refresh() {
     <div class="best-for"><strong>Best for:</strong> ${info.best}</div>
     ${idxSection}
     ${notesHtml}`;
+
+  scheduleRenderDiagram();
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1315,6 +1358,231 @@ function copyCmd() {
 }
 
 /* ═══════════════════════════════════════════════════
+   DATA FLOW DIAGRAM
+═══════════════════════════════════════════════════ */
+
+// Sanitize a string for use inside Mermaid ["label"] syntax
+function dl(s) { return (s || '').replace(/"/g, "'").replace(/[<>]/g, '').substring(0, 48); }
+
+function buildDiagram() {
+  const al = S.aligner;
+  if (!al) return null;
+
+  const OUT  = dl(S.output      || 'output');
+  const REF  = dl(S.ref         || 'reference.fa');
+  const R1   = dl(S.r1          || 'R1.fastq.gz');
+  const R2   = dl(S.r2          || 'R2.fastq.gz');
+  const LONG = dl(S.reads       || 'reads.fastq.gz');
+  const TX   = dl(S.txomeFa     || 'transcriptome.fa');
+  const T    = S.threads        || '8';
+  const GDIR = dl(S.genomeDir   || 'star_genome_dir');
+  const RIDX = dl(S.refIdx      || 'genome_index');
+  const SIDX = dl(S.salmonIdx   || 'salmon_index');
+  const KIDX = dl(S.kallistoIdx || 'kallisto_index.idx');
+
+  const C = `    classDef file fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    classDef tool fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef idx  fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef out  fill:#dcfce7,stroke:#16a34a,color:#14532d`;
+
+  const isQuant = ALIGNERS[al]?.quantOnly;
+
+  // Optional post-processing nodes+edges appended after BAM output
+  function post(from) {
+    if (isQuant) return '';
+    let s = '', cur = from;
+    if (S.markDups && !S.sortBam) {
+      return `    WARN["⚠ Sort BAM required for markdup"]:::tool\n    ${from} -.-> WARN\n`;
+    }
+    if (S.markDups && S.sortBam) {
+      s += `    MDUP["samtools markdup"]:::tool\n    MDBAM(["${OUT}.markdup.bam"]):::out\n    ${cur} --> MDUP --> MDBAM\n`;
+      cur = 'MDBAM';
+    }
+    if (S.indexBam) {
+      const bai = cur === 'MDBAM' ? `${OUT}.markdup.bam.bai` : `${OUT}.bam.bai`;
+      s += `    SIDXB["samtools index"]:::tool\n    BAIN(["${bai}"]):::out\n    ${cur} --> SIDXB --> BAIN\n`;
+    }
+    return s;
+  }
+
+  // Sort pipe or plain BAM output
+  function bamOut(from) {
+    return S.sortBam
+      ? `    SORT["samtools sort"]:::tool\n    BAM(["${OUT}.bam"]):::out\n    ${from} --> SORT --> BAM\n`
+      : `    BAM(["${OUT}.bam"]):::out\n    ${from} --> BAM\n`;
+  }
+
+  // Short-read input nodes
+  const srIn  = S.paired
+    ? `    R1(["${R1}"]):::file\n    R2(["${R2}"]):::file`
+    : `    R1(["${R1}"]):::file`;
+  const srArr = S.paired ? `R1 & R2` : `R1`;
+
+  switch(al) {
+
+    case 'bwa-mem2':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    BIDX["bwa-mem2 index"]:::tool
+    IDXF(["index files<br/>.0123 .bwt.2bit.64 .pac"]):::idx
+    BWA["bwa-mem2 mem -t ${T}"]:::tool
+${bamOut('BWA')}${post('BAM')}
+    REF --> BIDX --> IDXF --> BWA
+    ${srArr} --> BWA`;
+
+    case 'bwa-mem': {
+      const xf   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
+      const long = ['pacbio','ont'].includes(S.tech);
+      const inN  = long ? `    LR(["${LONG}"]):::file` : srIn;
+      const inA  = long ? 'LR' : srArr;
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${inN}
+    BIDX["bwa index"]:::tool
+    IDXF(["index files<br/>.amb .ann .bwt .pac .sa"]):::idx
+    BWA["bwa mem${xf} -t ${T}"]:::tool
+${bamOut('BWA')}${post('BAM')}
+    REF --> BIDX --> IDXF --> BWA
+    ${inA} --> BWA`;
+    }
+
+    case 'bowtie2':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    BIDX["bowtie2-build -p ${T}"]:::tool
+    IDXF(["${RIDX}.*.bt2"]):::idx
+    BT2["bowtie2 ${S.bt2Preset||'--sensitive'} -p ${T}"]:::tool
+${bamOut('BT2')}${post('BAM')}
+    REF --> BIDX --> IDXF --> BT2
+    ${srArr} --> BT2`;
+
+    case 'minimap2-pb':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    MMI(["ref.mmi<br/>optional pre-index"]):::idx
+    LR(["${LONG}"]):::file
+    MM2["minimap2 -ax map-hifi -t ${T}"]:::tool
+${bamOut('MM2')}${post('BAM')}
+    REF -.->|minimap2 -d| MMI
+    REF --> MM2
+    MMI -.->|use in place of FASTA| MM2
+    LR --> MM2`;
+
+    case 'minimap2-ont':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    MMI(["ref.mmi<br/>optional pre-index"]):::idx
+    LR(["${LONG}"]):::file
+    MM2["minimap2 -ax map-ont -t ${T}"]:::tool
+${bamOut('MM2')}${post('BAM')}
+    REF -.->|minimap2 -d| MMI
+    REF --> MM2
+    MMI -.->|use in place of FASTA| MM2
+    LR --> MM2`;
+
+    case 'star': {
+      const coord = S.sortBam ? 'sortedByCoord' : 'unsorted';
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    GTF(["annotation.gtf"]):::file
+${srIn}
+    SGEN["STAR genomeGenerate<br/>--runThreadN ${T}"]:::tool
+    GDIR2(["${GDIR}/"]):::idx
+    SALN["STAR align<br/>--runThreadN ${T}${S.starTwoPass ? '<br/>--twopassMode Basic' : ''}"]:::tool
+    BAMO(["${OUT}/<br/>Aligned.${coord}.bam${S.starQuantMode ? '<br/>ReadsPerGene.out.tab' : ''}"]):::out
+${post('BAMO')}
+    REF --> SGEN
+    GTF --> SGEN
+    SGEN --> GDIR2 --> SALN
+    ${srArr} --> SALN
+    SALN --> BAMO`;
+    }
+
+    case 'hisat2':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    GTF(["annotation.gtf<br/>optional"]):::file
+${srIn}
+    HBLD["hisat2-build -p ${T}"]:::tool
+    IDXF(["${RIDX}.*.ht2"]):::idx
+    HT2["hisat2 -p ${T}"]:::tool
+${bamOut('HT2')}${post('BAM')}
+    REF --> HBLD
+    GTF -.->|extract splice sites| HBLD
+    HBLD --> IDXF --> HT2
+    ${srArr} --> HT2`;
+
+    case 'salmon':
+      return `flowchart LR\n${C}
+    TX(["${TX}"]):::file
+    REFF(["${REF}<br/>for decoy index"]):::file
+${srIn}
+    SIND["salmon index -p ${T}"]:::tool
+    SIDXF(["${SIDX}/"]):::idx
+    SQUANT["salmon quant<br/>-l ${S.libType||'A'}"]:::tool
+    QOUT(["${OUT}_salmon/<br/>quant.sf<br/>quant.genes.sf"]):::out
+    TX --> SIND
+    REFF -.->|decoy-aware| SIND
+    SIND --> SIDXF --> SQUANT
+    ${srArr} --> SQUANT
+    SQUANT --> QOUT`;
+
+    case 'kallisto':
+      return `flowchart LR\n${C}
+    TX(["${TX}"]):::file
+${srIn}
+    KIND["kallisto index"]:::tool
+    KIDXF(["${KIDX}"]):::idx
+    KQUANT["kallisto quant -t ${T}${!S.paired?' --single':''}"]:::tool
+    QOUT(["${OUT}_kallisto/<br/>abundance.tsv<br/>abundance.h5"]):::out
+    TX --> KIND --> KIDXF --> KQUANT
+    ${srArr} --> KQUANT
+    KQUANT --> QOUT`;
+
+    case 'minimap2-rna':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    MMI(["ref.mmi<br/>optional pre-index"]):::idx
+    LR(["${LONG}"]):::file
+    MM2["minimap2 -ax splice:hq -t ${T}"]:::tool
+${bamOut('MM2')}${post('BAM')}
+    REF -.->|minimap2 -d| MMI
+    REF --> MM2
+    MMI -.->|use in place of FASTA| MM2
+    LR --> MM2`;
+
+    default: return null;
+  }
+}
+
+let _diagTimer = null;
+function scheduleRenderDiagram() {
+  clearTimeout(_diagTimer);
+  _diagTimer = setTimeout(renderDiagram, 150);
+}
+
+async function renderDiagram() {
+  const def  = buildDiagram();
+  const sec  = document.getElementById('diagram-section');
+  const body = document.getElementById('diagram-body');
+
+  if (!def) { sec.style.display = 'none'; return; }
+
+  sec.style.display = 'block';
+  document.getElementById('diagram-aligner-name').textContent = ALIGNERS[S.aligner]?.label || '';
+
+  try {
+    const { svg } = await mermaid.render('mg_' + Date.now(), def);
+    body.innerHTML = svg;
+  } catch(e) {
+    body.innerHTML = '<p class="diagram-placeholder">Diagram unavailable.</p>';
+    console.warn('Mermaid render error:', e, '\nDef:\n', def);
+  }
+}
+
+/* ═══════════════════════════════════════════════════
    CITATIONS TOGGLE
 ═══════════════════════════════════════════════════ */
 function toggleCitations() {
@@ -1328,6 +1596,21 @@ function toggleCitations() {
 function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 
 /* Init */
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    fontSize: '13px',
+    primaryColor: '#dbeafe',
+    primaryTextColor: '#1e3a5f',
+    primaryBorderColor: '#2563eb',
+    lineColor: '#64748b',
+    secondaryColor: '#ede9fe',
+    tertiaryColor: '#f1f5f9',
+    edgeLabelBackground: '#f8fafc',
+  },
+  flowchart: { curve: 'basis', padding: 12, htmlLabels: true },
+});
 refresh();
 </script>
 </body>
