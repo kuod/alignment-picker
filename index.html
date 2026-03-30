@@ -289,6 +289,48 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .note.warn    { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
 .note.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
 
+/* ── Verbose options ── */
+.verbose-toggle-wrap {
+  margin-top: 1.25rem; padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.verbose-section { margin-top: 1rem; }
+.verbose-section-head {
+  font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--primary-dark); margin-bottom: 0.75rem;
+}
+.verbose-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.verbose-item {
+  padding: 0.75rem 0.85rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.verbose-flag {
+  display: inline-block;
+  font-family: 'SF Mono','Fira Code','Cascadia Code',monospace;
+  font-size: 0.77rem; font-weight: 700;
+  background: var(--primary-light); color: var(--primary-dark);
+  padding: 0.08rem 0.38rem; border-radius: 4px;
+  margin-right: 0.25rem;
+}
+.verbose-why {
+  font-size: 0.77rem; color: var(--muted);
+  line-height: 1.5; margin-top: 0.35rem;
+}
+.verbose-val-row {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+}
+.verbose-val-input {
+  width: 130px; padding: 0.32rem 0.55rem;
+  border: 1.5px solid var(--border); border-radius: 6px;
+  font-family: 'SF Mono','Fira Code',monospace; font-size: 0.82rem;
+  color: var(--text); background: var(--card);
+  transition: border-color 0.14s;
+}
+.verbose-val-input:focus { outline: none; border-color: var(--primary); }
+.verbose-val-input:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* ── Data Flow Diagram ── */
 .diagram-section {
   max-width: 1300px;
@@ -567,6 +609,8 @@ const S = {
   tech:      null,
   aligner:   null,
   activeTab: 'index',
+  verboseMode: false,
+  vOpts: {},
   // files & index
   ref:           'reference.fa',
   refIdx:        'genome_index',
@@ -878,6 +922,173 @@ const TECH_OPTIONS = {
 };
 
 /* ═══════════════════════════════════════════════════
+   VERBOSE OPTIONS DATABASE
+═══════════════════════════════════════════════════ */
+// type: 'check' | 'text' | 'val' (text/number with default) | 'select'
+// cmd(v): returns the flag string to inject into the command
+const VERBOSE_OPTS = {
+  'bwa-mem2': [
+    { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
+      placeholder: "@RG\\tID:sample1\\tSM:sample1\\tPL:ILLUMINA\\tLB:lib1",
+      why: 'Required for GATK HaplotypeCaller and most variant calling pipelines. Encodes sample name, library, and platform into the BAM header — without it, GATK will reject the file. Use \\t as a literal tab separator.',
+      cmd: v => `-R '${v}'` },
+    { key: 'M', type: 'check', flag: '-M', label: 'Mark split reads as secondary',
+      why: 'Picard MarkDuplicates compatibility. Without -M, chimeric/split alignments are flagged supplementary (0x800) rather than secondary (0x100), which confuses Picard and can inflate duplicate estimates.',
+      cmd: () => '-M' },
+    { key: 'Y', type: 'check', flag: '-Y', label: 'Soft-clip supplementary alignments',
+      why: 'Prevents hard-clipping at supplementary alignment breakpoints. Some CNV and SV callers (e.g., GATK CNV, Manta) require full soft-clipped sequences at split-read breakpoints to work correctly.',
+      cmd: () => '-Y' },
+    { key: 'T', type: 'val', flag: '-T', label: 'Minimum alignment score', defaultVal: '30',
+      why: 'Reads scoring below this threshold are not written to output. Lower values (e.g., 20) recover weakly mapping reads in divergent or repetitive regions. Higher values (40+) reduce noise but can miss real alignments near repeat boundaries.',
+      cmd: v => `-T ${v}` },
+  ],
+  'bwa-mem': [
+    { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
+      placeholder: "@RG\\tID:sample1\\tSM:sample1\\tPL:ILLUMINA\\tLB:lib1",
+      why: 'Required for GATK variant calling. Encodes sample identity (SM), library (LB), and platform (PL) into the BAM header.',
+      cmd: v => `-R '${v}'` },
+    { key: 'M', type: 'check', flag: '-M', label: 'Mark split reads as secondary',
+      why: 'Picard MarkDuplicates compatibility. Flags chimeric alignments as secondary (0x100) instead of supplementary (0x800) — necessary when using Picard-based duplicate marking.',
+      cmd: () => '-M' },
+    { key: 'Y', type: 'check', flag: '-Y', label: 'Soft-clip supplementary alignments',
+      why: 'Prevents hard-clipping on supplementary reads. Recommended when downstream SV or CNV callers require access to the full read sequence at alignment breakpoints.',
+      cmd: () => '-Y' },
+    { key: 'T', type: 'val', flag: '-T', label: 'Minimum alignment score', defaultVal: '30',
+      why: 'Alignment score cutoff. Reduce to recover reads in highly divergent regions; increase for higher-specificity output in clean, well-characterised genomes.',
+      cmd: v => `-T ${v}` },
+  ],
+  'bowtie2': [
+    { key: 'local', type: 'check', flag: '--local', label: 'Local alignment mode',
+      why: 'Allows soft-clipping at read ends to find the best partial match. Useful when reads may contain adapter contamination or low-quality ends that would otherwise prevent concordant alignment. Pair with --very-sensitive-local for best results.',
+      cmd: () => '--local' },
+    { key: 'noul', type: 'check', flag: '--no-unal', label: 'Suppress unaligned reads in output',
+      why: 'Omits unaligned reads from the SAM/BAM output, reducing file size. Appropriate when only aligned reads matter (e.g., ChIP-seq peak calling, ATAC-seq). Avoid if tracking alignment rates for QC.',
+      cmd: () => '--no-unal' },
+    { key: 'nomix', type: 'check', flag: '--no-mixed', label: 'Disallow mixed-mode alignment',
+      why: 'Discards read pairs where only one mate aligns. Enforces strict concordant pairing. Use when your downstream tool assumes all reads in the BAM are properly paired.',
+      cmd: () => '--no-mixed' },
+    { key: 'X', type: 'val', flag: '-X', label: 'Maximum insert size', defaultVal: '500',
+      why: 'Upper limit on fragment length for concordant alignment (default 500 bp). Increase for ATAC-seq (try 2000 to capture nucleosomal fragments) or large-insert libraries. Decrease for tight insert-size filtering.',
+      cmd: v => `-X ${v}` },
+    { key: 'N', type: 'val', flag: '-N', label: 'Seed mismatch allowance', defaultVal: '0',
+      why: 'Mismatches allowed in the seed alignment (0 or 1, default 0). Setting to 1 roughly triples runtime but improves sensitivity, particularly useful for divergent samples or SNP-rich regions.',
+      cmd: v => `-N ${v}` },
+  ],
+  'minimap2-pb': [
+    { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
+      why: 'Outputs only primary + supplementary alignments. Reduces BAM size and simplifies downstream SV calling when multi-mapping information is not needed. Most variant callers work exclusively with primary alignments.',
+      cmd: () => '--secondary=no' },
+    { key: 'MD', type: 'check', flag: '--MD', label: 'Output MD tag',
+      why: 'Adds the MD string (mismatch and deletion positions relative to reference). Required by some variant calling tools and base-quality recalibration pipelines that do not re-derive mismatch positions from the reference FASTA.',
+      cmd: () => '--MD' },
+    { key: 'cs', type: 'check', flag: '--cs', label: 'Output cs difference string tag',
+      why: 'A compact encoding of per-base differences between read and reference. Used by paftools.js and some long-read variant callers. More informative than MD for downstream analysis of long reads.',
+      cmd: () => '--cs' },
+    { key: 'Y', type: 'check', flag: '-Y', label: 'Soft-clip supplementary alignments',
+      why: 'Prevents hard-clipping at breakpoints in supplementary alignments. Recommended when SV callers (pbsv, SVIM-asm) need the full read sequence flanking structural variant breakpoints.',
+      cmd: () => '-Y' },
+  ],
+  'minimap2-ont': [
+    { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
+      why: 'Limits output to primary and supplementary alignments only. Appropriate for variant calling workflows where multi-mapping reads are excluded anyway.',
+      cmd: () => '--secondary=no' },
+    { key: 'MD', type: 'check', flag: '--MD', label: 'Output MD tag',
+      why: 'Required by some base modification tools (e.g., older Nanopolish pipelines) and variant callers that don\'t re-derive mismatches from the reference.',
+      cmd: () => '--MD' },
+    { key: 'cs', type: 'check', flag: '--cs', label: 'Output cs difference string tag',
+      why: 'Used by Clair3, Pepper-Margin-DeepVariant, and other ONT-aware callers. Provides richer alignment information than the MD tag for long, noisy reads.',
+      cmd: () => '--cs' },
+    { key: 'Y', type: 'check', flag: '-Y', label: 'Soft-clip supplementary alignments',
+      why: 'Prevents hard-clipping at supplementary alignment breakpoints. Required by Sniffles2 and some other ONT SV callers for correct breakpoint sequence retrieval.',
+      cmd: () => '-Y' },
+  ],
+  'star': [
+    { key: 'rg', type: 'text', flag: '--outSAMattrRGline', label: 'Read group line',
+      placeholder: 'ID:sample1 SM:sample1 PL:ILLUMINA LB:lib1',
+      why: 'Adds a @RG header. Required for GATK variant calling. Note: STAR uses space-separated fields (not \\t like BWA). Must include at minimum an ID field.',
+      cmd: v => `--outSAMattrRGline '${v}'` },
+    { key: 'mmNmax', type: 'val', flag: '--outFilterMultimapNmax', label: 'Max multimapping loci', defaultVal: '10',
+      why: 'Reads mapping to more than this many loci are discarded (default 10). Set to 1 for unique-mappers only — important for allele-specific expression or when repetitive-region reads would confound analysis. Increase for lncRNA or transposon quantification.',
+      cmd: v => `--outFilterMultimapNmax ${v}` },
+    { key: 'misNmax', type: 'val', flag: '--outFilterMismatchNmax', label: 'Max mismatches per alignment', defaultVal: '10',
+      why: 'Alignments exceeding this many mismatches are discarded (default 10, very permissive). Tighten to 2–4 for high-quality samples to improve specificity; keep high for cross-species or highly polymorphic samples.',
+      cmd: v => `--outFilterMismatchNmax ${v}` },
+    { key: 'chimSeg', type: 'val', flag: '--chimSegmentMin', label: 'Min chimeric segment length (fusion detection)', defaultVal: '20',
+      why: 'Enables chimeric/fusion read detection when set ≥ 10. Required as input for STAR-Fusion and Arriba. Set to 0 to disable. Higher values (20) reduce false positives at the cost of sensitivity for short fusion junctions.',
+      cmd: v => `--chimSegmentMin ${v}` },
+    { key: 'sjdbOH', type: 'val', flag: '--sjdbOverhang', label: 'Splice junction overhang (readLength − 1)', defaultVal: '100',
+      why: 'Set to readLength − 1 for best junction detection accuracy (default assumes 101 bp reads). If your reads are 150 bp, set to 149. This value should match what was used when building the genome index.',
+      cmd: v => `--sjdbOverhang ${v}` },
+    { key: 'sortRAM', type: 'val', flag: '--limitBAMsortRAM', label: 'RAM limit for BAM sorting (bytes)', defaultVal: '10000000000',
+      why: 'Caps memory usage for coordinate-sorted BAM output. On HPC systems with strict per-job memory limits, set this explicitly (e.g., 10000000000 = 10 GB) to avoid job failure. Leave blank to let STAR manage memory automatically.',
+      cmd: v => `--limitBAMsortRAM ${v}` },
+  ],
+  'hisat2': [
+    { key: 'dta', type: 'check', flag: '--dta', label: 'Downstream transcriptome assembly mode',
+      why: 'Required when using StringTie for transcript assembly or quantification downstream. Reports alignments tailored for assembly — without this flag, StringTie will assemble less accurately because it relies on specific alignment properties that --dta enforces.',
+      cmd: () => '--dta' },
+    { key: 'strand', type: 'select', flag: '--rna-strandness', label: 'Strand specificity',
+      options: [
+        { val: '',   label: '— unstranded (default) —' },
+        { val: 'RF', label: 'RF — dUTP / TruSeq Stranded (most common)' },
+        { val: 'FR', label: 'FR — ligation-based / ScriptSeq' },
+        { val: 'R',  label: 'R — single-end, reverse strand' },
+        { val: 'F',  label: 'F — single-end, forward strand' },
+      ],
+      why: 'Specifying library strandedness improves alignment accuracy and is required for correct strand-specific quantification. dUTP-based kits (TruSeq Stranded) are RF. If unsure, use RSeQC infer_experiment.py or first run Salmon with -l A to auto-detect.',
+      cmd: v => `--rna-strandness ${v}` },
+    { key: 'k', type: 'val', flag: '-k', label: 'Max alignments reported per read', defaultVal: '5',
+      why: 'Report up to this many alignments per read (default reports only the best). Increase when studying multi-mapping reads, repeat-derived transcripts, or when feeding into tools that exploit multi-mappers (e.g., mmseq).',
+      cmd: v => `-k ${v}` },
+    { key: 'minintron', type: 'val', flag: '--min-intronlen', label: 'Minimum intron length', defaultVal: '20',
+      why: 'Default 20 bp is appropriate for most organisms. Increase for organisms with longer minimum introns (e.g., some fungi). Decrease is rarely needed but may recover very short introns in compact genomes.',
+      cmd: v => `--min-intronlen ${v}` },
+  ],
+  'salmon': [
+    { key: 'gcBias', type: 'check', flag: '--gcBias', label: 'GC bias correction',
+      why: 'Corrects for GC-content-dependent coverage variation introduced by PCR amplification. Adds ~10–15% to runtime but measurably improves accuracy for GC-skewed transcriptomes (e.g., Arabidopsis, Plasmodium) or samples amplified with low-fidelity polymerases. Recommended for most production runs.',
+      cmd: () => '--gcBias' },
+    { key: 'seqBias', type: 'check', flag: '--seqBias', label: 'Sequence-specific bias correction',
+      why: 'Models and corrects for sequence context bias around fragment starts (hexamer priming bias from random priming protocols). Most Illumina RNA-seq kits exhibit this bias. Use alongside --gcBias for maximum accuracy.',
+      cmd: () => '--seqBias' },
+    { key: 'posBias', type: 'check', flag: '--posBias', label: "Positional bias correction",
+      why: "Corrects for systematic coverage drops near 5'/3' transcript ends common in some library prep protocols. Adds modest runtime overhead; most useful for 3'-biased kits or degraded RNA samples.",
+      cmd: () => '--posBias' },
+    { key: 'boots', type: 'val', flag: '-b', label: 'Bootstrap replicates', defaultVal: '30',
+      why: 'Generates bootstrap quantification estimates enabling posterior uncertainty quantification. Required by the sleuth differential expression tool. Standard recommendation for sleuth is 30–100 bootstraps. Adds significant runtime (N bootstraps ≈ N× longer). Not needed for DESeq2 or edgeR workflows.',
+      cmd: v => `-b ${v}` },
+  ],
+  'kallisto': [
+    { key: 'boots', type: 'val', flag: '-b', label: 'Bootstrap replicates', defaultVal: '100',
+      why: 'Generates bootstrap quantification samples for uncertainty estimation. Required by the sleuth differential expression tool. The standard recommendation is 100 bootstraps for sleuth. Not needed for DESeq2/edgeR workflows. Significantly increases runtime.',
+      cmd: v => `-b ${v}` },
+    { key: 'strand', type: 'select', flag: 'strand', label: 'Strand specificity',
+      options: [
+        { val: '',               label: '— unstranded (default) —' },
+        { val: '--rf-stranded',  label: '--rf-stranded (dUTP / TruSeq Stranded, most common)' },
+        { val: '--fr-stranded',  label: '--fr-stranded (ligation-based / ScriptSeq)' },
+      ],
+      why: 'Specifying the correct strandedness can improve quantification accuracy by ~5%. dUTP-based kits (TruSeq Stranded, Ribo-Zero) use --rf-stranded. If unsure, run salmon quant -l A first to auto-detect strand.',
+      cmd: v => v },
+    { key: 'bias', type: 'check', flag: '--bias', label: 'Sequence bias correction',
+      why: 'Learns and corrects a sequence-specific bias model. Similar to Salmon\'s --seqBias. Recommended for libraries showing strong positional bias at fragment start sites.',
+      cmd: () => '--bias' },
+  ],
+  'minimap2-rna': [
+    { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
+      why: 'Limits output to primary and supplementary alignments. For full-length isoform analysis, secondary alignments are typically noise and their inclusion can confuse transcript assemblers (FLAIR, IsoQuant, TALON).',
+      cmd: () => '--secondary=no' },
+    { key: 'junc', type: 'text', flag: '--junc-bed', label: 'Known splice junctions (BED file)',
+      placeholder: 'known_junctions.bed',
+      why: 'Provides annotated splice junctions to guide long-read alignment, significantly improving accuracy for low-abundance transcripts and reducing spurious novel junctions. Generate from GTF using: paftools.js gff2bed annotation.gtf > junctions.bed',
+      cmd: v => `--junc-bed ${v}` },
+    { key: 'cs', type: 'check', flag: '--cs', label: 'Output cs difference string tag',
+      why: 'Adds a compact per-base difference encoding used by IsoQuant, FLAIR, and other long-read transcript quantification tools. Recommended when planning to use these downstream tools.',
+      cmd: () => '--cs' },
+  ],
+};
+
+/* ═══════════════════════════════════════════════════
    UI HELPERS
 ═══════════════════════════════════════════════════ */
 function lock(id)   { document.getElementById(id).classList.add('locked'); }
@@ -1033,7 +1244,17 @@ function renderParams() {
       ${pairedSel}
     </div>
     <div class="param-grid">${readFields}</div>
-    ${extraOpts}`;
+    ${extraOpts}
+    <div class="verbose-toggle-wrap">
+      <label class="check-item">
+        <input type="checkbox" ${S.verboseMode?'checked':''} onchange="S.verboseMode=this.checked;renderParams();renderPostProc();refresh()">
+        <div>
+          <div class="check-label">Show advanced options</div>
+          <div class="check-desc">Reveal additional flags with explanations of when and why to use each one</div>
+        </div>
+      </label>
+    </div>
+    ${S.verboseMode ? renderVerboseSection() : ''}`;
 }
 
 function field(label, inputHtml) {
@@ -1045,6 +1266,109 @@ function check(key, label, desc) {
     <input type="checkbox" ${S[key]?'checked':''} onchange="S.${key}=this.checked;refresh()">
     <div><div class="check-label">${label}</div><div class="check-desc">${desc}</div></div>
   </label>`;
+}
+
+/* ── Verbose helpers ── */
+function setVOpt(key, val) { S.vOpts[key] = val; }
+
+function toggleVOptInput(key, enabled) {
+  const inp = document.getElementById('vv_' + key);
+  if (!inp) return;
+  inp.disabled = !enabled;
+  setVOpt(key, enabled ? inp.value : null);
+  refresh();
+}
+
+function getVerboseFlags(al) {
+  if (!S.verboseMode) return [];
+  return (VERBOSE_OPTS[al] || []).reduce((acc, opt) => {
+    const v = S.vOpts[opt.key];
+    if (opt.type === 'check'  && v === true)                          acc.push(opt.cmd(v));
+    if (opt.type === 'text'   && v && v.trim())                       acc.push(opt.cmd(v.trim()));
+    if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(v));
+    if (opt.type === 'select' && v)                                   acc.push(opt.cmd(v));
+    return acc;
+  }, []);
+}
+
+// Inline flags for single-line commands: " -flag val"
+function vf(al) {
+  const f = getVerboseFlags(al);
+  return f.length ? ' ' + f.join(' ') : '';
+}
+
+// Multi-line flags for indented commands: " \\\n  --flag val"
+function vfml(al) {
+  const f = getVerboseFlags(al);
+  return f.length ? f.map(x => ` \\\n  ${x}`).join('') : '';
+}
+
+function renderVerboseSection() {
+  const al   = S.aligner;
+  const opts = VERBOSE_OPTS[al] || [];
+  if (!opts.length) return '';
+
+  const items = opts.map(opt => {
+    const val = S.vOpts[opt.key];
+
+    if (opt.type === 'check') {
+      return `<div class="verbose-item">
+        <label class="check-item">
+          <input type="checkbox" ${val?'checked':''} onchange="setVOpt('${opt.key}',this.checked);refresh()">
+          <div>
+            <div class="check-label"><span class="verbose-flag">${opt.flag}</span>${opt.label}</div>
+            <div class="verbose-why">${opt.why}</div>
+          </div>
+        </label>
+      </div>`;
+    }
+
+    if (opt.type === 'text') {
+      return `<div class="verbose-item">
+        <div class="field">
+          <label><span class="verbose-flag">${opt.flag}</span>${opt.label}</label>
+          <input type="text" value="${esc(val||'')}" placeholder="${esc(opt.placeholder||'')}"
+            oninput="setVOpt('${opt.key}',this.value||null);refresh()">
+        </div>
+        <div class="verbose-why">${opt.why}</div>
+      </div>`;
+    }
+
+    if (opt.type === 'val') {
+      const enabled = val !== undefined && val !== null && val !== '';
+      return `<div class="verbose-item">
+        <div class="verbose-val-row">
+          <input type="checkbox" ${enabled?'checked':''} style="flex-shrink:0"
+            onchange="toggleVOptInput('${opt.key}',this.checked)">
+          <span class="check-label"><span class="verbose-flag">${opt.flag}</span>${opt.label}</span>
+          <input type="text" id="vv_${opt.key}" class="verbose-val-input"
+            value="${esc(enabled ? String(val) : (opt.defaultVal||''))}"
+            ${enabled?'':'disabled'}
+            oninput="if(S.vOpts['${opt.key}']!==null&&S.vOpts['${opt.key}']!==undefined)setVOpt('${opt.key}',this.value||null);refresh()">
+        </div>
+        <div class="verbose-why">${opt.why}</div>
+      </div>`;
+    }
+
+    if (opt.type === 'select') {
+      const cur = val || '';
+      return `<div class="verbose-item">
+        <div class="field">
+          <label><span class="verbose-flag">${opt.flag}</span>${opt.label}</label>
+          <select onchange="setVOpt('${opt.key}',this.value||null);refresh()">
+            ${opt.options.map(o=>`<option value="${esc(o.val)}" ${cur===o.val?'selected':''}>${o.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="verbose-why">${opt.why}</div>
+      </div>`;
+    }
+    return '';
+  }).join('');
+
+  return `<div class="verbose-section">
+    <div class="verbose-section-head">Advanced options</div>
+    <div class="verbose-list">${items}</div>
+  </div>`;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1115,30 +1439,30 @@ function buildAlignCmd() {
   switch (al) {
 
     case 'bwa-mem2':
-      lines.push(pipe(`bwa-mem2 mem -t ${T} ${REF} ${reads}`));
+      lines.push(pipe(`bwa-mem2 mem -t ${T}${vf('bwa-mem2')} ${REF} ${reads}`));
       break;
 
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
-      lines.push(pipe(`bwa mem${xFlag} -t ${T} ${REF} ${inReads}`));
+      lines.push(pipe(`bwa mem${xFlag} -t ${T}${vf('bwa-mem')} ${REF} ${inReads}`));
       break;
     }
 
     case 'bowtie2': {
       const preset = S.bt2Preset || '--sensitive';
       const inArg  = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
-      lines.push(pipe(`bowtie2 ${preset} -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
+      lines.push(pipe(`bowtie2 ${preset} -p ${T}${vf('bowtie2')} -x ${S.refIdx} \\\n  ${inArg}`));
       break;
     }
 
     case 'minimap2-pb':
       lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
-      lines.push(pipe(`minimap2 -ax map-hifi -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax map-hifi${vf('minimap2-pb')} -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'minimap2-ont':
-      lines.push(pipe(`minimap2 -ax map-ont -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax map-ont${vf('minimap2-ont')} -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'star': {
@@ -1152,25 +1476,27 @@ function buildAlignCmd() {
       star += ` \\\n  --outFileNamePrefix ${OUT}/`;
       if (S.starTwoPass)   star += ` \\\n  --twopassMode Basic`;
       if (S.starQuantMode) star += ` \\\n  --quantMode GeneCounts`;
+      star += vfml('star');
       lines.push(star);
       break;
     }
 
     case 'hisat2': {
       const inArg = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
-      lines.push(pipe(`hisat2 -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
+      lines.push(pipe(`hisat2 -p ${T}${vf('hisat2')} -x ${S.refIdx} \\\n  ${inArg}`));
       break;
     }
 
     case 'salmon': {
       const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-r ${R1}`;
-      lines.push(`salmon quant \\\n  -i ${S.salmonIdx} \\\n  -l ${S.libType || 'A'} \\\n  ${inArg} \\\n  -p ${T} \\\n  --validateMappings \\\n  -o ${OUT}_salmon`);
+      lines.push(`salmon quant \\\n  -i ${S.salmonIdx} \\\n  -l ${S.libType || 'A'} \\\n  ${inArg} \\\n  -p ${T} \\\n  --validateMappings${vfml('salmon')} \\\n  -o ${OUT}_salmon`);
       break;
     }
 
     case 'kallisto': {
       let kl = `kallisto quant \\\n  -i ${S.kallistoIdx} \\\n  -o ${OUT}_kallisto \\\n  -t ${T}`;
       if (!S.paired) kl += ` \\\n  --single -l 200 -s 20`;
+      kl += vfml('kallisto');
       kl += ` \\\n  ${S.paired ? `${R1} ${R2}` : R1}`;
       lines.push(kl);
       break;
@@ -1178,7 +1504,7 @@ function buildAlignCmd() {
 
     case 'minimap2-rna':
       lines.push('# Use -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
-      lines.push(pipe(`minimap2 -ax splice:hq -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax splice:hq${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
       break;
 
     default:
