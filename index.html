@@ -474,10 +474,17 @@ header p  { opacity: 0.8; font-size: 1rem; }
     <div class="cmd-card">
       <div class="cmd-header">
         <div class="cmd-tabs">
+          <button class="cmd-tab" id="tab-btn-qc"    onclick="switchTab('qc')">0. QC</button>
           <button class="cmd-tab active" id="tab-btn-index" onclick="switchTab('index')">1. Index</button>
           <button class="cmd-tab"        id="tab-btn-align" onclick="switchTab('align')">2. Align</button>
         </div>
-        <button class="copy-btn" id="copy-btn" onclick="copyCmd()">Copy</button>
+        <div style="display:flex;gap:0.4rem;">
+          <button class="copy-btn" id="dl-btn" onclick="downloadScript()" title="Download as .sh script">↓ .sh</button>
+          <button class="copy-btn" id="copy-btn" onclick="copyCmd()">Copy</button>
+        </div>
+      </div>
+      <div class="cmd-body hidden" id="cmd-qc">
+        <span class="placeholder">Make selections to build your command →</span>
       </div>
       <div class="cmd-body" id="cmd-index">
         <span class="placeholder">Make selections to build your command →</span>
@@ -632,6 +639,8 @@ const S = {
   starTwoPass:   false,
   starQuantMode: false,
   libType:       'A',
+  genomeSizeGb:  '',
+  qcTool:        'fastp',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -793,7 +802,17 @@ const ALIGNERS = {
     best: 'Standard RNA-seq DE analysis, junction discovery, ENCODE-style pipelines',
     notes: [],
     idx: {
-      cmd: s => `STAR --runMode genomeGenerate \\\n  --genomeDir ${s.genomeDir} \\\n  --genomeFastaFiles ${s.ref} \\\n  --sjdbGTFfile annotation.gtf \\\n  --runThreadN ${s.threads}\n\n# For small genomes (<1 Gb) or draft assemblies, add:\n# --genomeSAindexNbases 11`,
+      cmd: s => {
+        let c = `STAR --runMode genomeGenerate \\\n  --genomeDir ${s.genomeDir} \\\n  --genomeFastaFiles ${s.ref} \\\n  --sjdbGTFfile annotation.gtf \\\n  --runThreadN ${s.threads}`;
+        const gb = parseFloat(s.genomeSizeGb);
+        if (gb > 0) {
+          const nb = Math.min(14, Math.floor(Math.log2(gb * 1e9) / 2 - 1));
+          c += ` \\\n  --genomeSAindexNbases ${nb}  # auto-calculated for ${gb} Gb genome`;
+        } else {
+          c += `\n\n# For small genomes (<1 Gb) or draft assemblies, add:\n# --genomeSAindexNbases 11`;
+        }
+        return c;
+      },
       mem: '~30 GB', time: '~30 min (human genome)',
       outputs: 'Directory: Genome, SA, SAindex, chrName.txt, sjdbInfo.txt, genomeParameters.txt, etc.',
       note: 'Requires a GTF annotation file alongside the genome FASTA. Rebuild if the GTF changes. Use --genomeSAindexNbases 11 for small or draft genomes.',
@@ -1175,7 +1194,10 @@ function renderParams() {
   /* ---------- reference/index field ---------- */
   let refField = '';
   if (al === 'star') {
-    refField = field('STAR Genome Directory', `<input type="text" value="${esc(S.genomeDir)}" oninput="S.genomeDir=this.value;refresh()">`);
+    refField = field('STAR Genome Directory', `<input type="text" value="${esc(S.genomeDir)}" oninput="S.genomeDir=this.value;refresh()">`) +
+               field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Genome size (Gb) <span style="font-weight:400;color:var(--muted)">for --genomeSAindexNbases</span>', `<input type="number" min="0.001" step="0.1" value="${esc(S.genomeSizeGb)}" placeholder="e.g. 3.1 for human, 0.12 for mouse chr1" oninput="S.genomeSizeGb=this.value;refresh()">`);
+    refField += `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">Leave blank for default (human-sized genomes). Set for small/viral/draft genomes to avoid a broken index.</div>`;
   } else if (['salmon','kallisto'].includes(al)) {
     const idxVal  = al === 'salmon' ? S.salmonIdx : S.kallistoIdx;
     const idxKey  = al === 'salmon' ? 'salmonIdx' : 'kallistoIdx';
@@ -1398,10 +1420,36 @@ function renderPostProc() {
 ═══════════════════════════════════════════════════ */
 function switchTab(tab) {
   S.activeTab = tab;
+  document.getElementById('tab-btn-qc').classList.toggle('active',    tab === 'qc');
   document.getElementById('tab-btn-index').classList.toggle('active', tab === 'index');
   document.getElementById('tab-btn-align').classList.toggle('active', tab === 'align');
+  document.getElementById('cmd-qc').classList.toggle('hidden',    tab !== 'qc');
   document.getElementById('cmd-index').classList.toggle('hidden', tab !== 'index');
   document.getElementById('cmd-align').classList.toggle('hidden', tab !== 'align');
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD QC COMMAND
+═══════════════════════════════════════════════════ */
+function buildQCCmd() {
+  if (!S.tech) return null;
+  const T   = S.threads || '8';
+  const OUT = S.output  || 'output';
+  const isLong = ['pacbio','ont','longrna'].includes(S.tech);
+
+  if (S.tech === 'ont' || S.tech === 'longrna') {
+    return `# ONT / long-read RNA QC\nNanoStat --fastq ${S.reads} --threads ${T} \\\n  > ${OUT}_nanostats.txt\n\n# Optional: filter by quality and minimum length\nNanoFilt -q 8 -l 1000 ${S.reads} \\\n  | gzip > ${OUT}_filtered.fastq.gz`;
+  }
+
+  if (S.tech === 'pacbio') {
+    return `# PacBio QC — FastQC for a quick report\nfastqc -t ${T} ${S.reads} -o ${OUT}_fastqc/`;
+  }
+
+  // Illumina short reads — fastp (recommended: trim + QC in one pass)
+  const reads = S.paired
+    ? `-i ${S.r1} -I ${S.r2} \\\n  -o ${OUT}_R1_trimmed.fastq.gz \\\n  -O ${OUT}_R2_trimmed.fastq.gz`
+    : `-i ${S.r1} \\\n  -o ${OUT}_trimmed.fastq.gz`;
+  return `# fastp — adapter trimming + QC in one pass\nfastp \\\n  ${reads} \\\n  --thread ${T} \\\n  --html ${OUT}_fastp.html \\\n  --json ${OUT}_fastp.json\n\n# Pass trimmed reads to aligner instead of the raw files above\n# Trim Galore (Cutadapt wrapper, good for RRBS / bisulfite):\n# trim_galore ${S.paired ? '--paired ' + S.r1 + ' ' + S.r2 : S.r1} -j ${T} -o ${OUT}_trimmed/`;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1542,7 +1590,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools'];
+const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt'];
 
 function highlight(raw) {
   const e = raw
@@ -1615,6 +1663,10 @@ function buildNotes() {
 function refresh() {
   const PLACEHOLDER = '<span class="placeholder">Make selections to build your command →</span>';
 
+  // QC tab
+  const qcCmd  = buildQCCmd();
+  document.getElementById('cmd-qc').innerHTML = qcCmd ? highlight(qcCmd) : PLACEHOLDER;
+
   // Index tab
   const idxCmd  = buildIndexCmd();
   const idxEl   = document.getElementById('cmd-index');
@@ -1624,6 +1676,10 @@ function refresh() {
   const alignCmd = buildAlignCmd();
   const alignEl  = document.getElementById('cmd-align');
   alignEl.innerHTML = alignCmd ? highlight(alignCmd) : PLACEHOLDER;
+
+  // Persist state
+  try { localStorage.setItem('ap_state', JSON.stringify(S)); } catch(e) {}
+  try { history.replaceState(null, '', '#' + btoa(JSON.stringify(S))); } catch(e) {}
 
   // Analysis panel
   const bodyEl = document.getElementById('analysis-body');
@@ -1673,7 +1729,7 @@ function refresh() {
    COPY
 ═══════════════════════════════════════════════════ */
 function copyCmd() {
-  const cmd = S.activeTab === 'index' ? buildIndexCmd() : buildAlignCmd();
+  const cmd = S.activeTab === 'qc' ? buildQCCmd() : S.activeTab === 'index' ? buildIndexCmd() : buildAlignCmd();
   if (!cmd) return;
   navigator.clipboard.writeText(cmd).then(() => {
     const btn = document.getElementById('copy-btn');
@@ -1681,6 +1737,73 @@ function copyCmd() {
     btn.classList.add('success');
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('success'); }, 2000);
   });
+}
+
+/* ═══════════════════════════════════════════════════
+   DOWNLOAD .sh SCRIPT
+═══════════════════════════════════════════════════ */
+function downloadScript() {
+  const al = S.aligner;
+  if (!al) return;
+
+  const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
+  const isQuant = ALIGNERS[al]?.quantOnly;
+
+  const lines = [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    '',
+    `# Pipeline script — generated by Alignment Picker`,
+    `# Tool: ${ALIGNERS[al]?.label || al}`,
+    `# Date: ${new Date().toISOString().slice(0, 10)}`,
+    '',
+    '# ── Variables ──────────────────────────────────────',
+    `THREADS=${S.threads || '8'}`,
+  ];
+
+  if (['salmon','kallisto'].includes(al)) {
+    lines.push(`TXOME="${S.txomeFa || 'transcriptome.fa'}"`);
+  } else {
+    lines.push(`REF="${S.ref || 'reference.fa'}"`);
+  }
+
+  if (isLong) {
+    lines.push(`READS="${S.reads || 'sample.fastq.gz'}"`);
+  } else {
+    lines.push(`R1="${S.r1 || 'sample_R1.fastq.gz'}"`);
+    if (S.paired) lines.push(`R2="${S.r2 || 'sample_R2.fastq.gz'}"`);
+  }
+  lines.push(`OUTPUT="${S.output || 'output'}"`);
+  lines.push('');
+
+  const qcCmd = buildQCCmd();
+  if (qcCmd) {
+    lines.push('# ── 0. Quality Control ─────────────────────────────');
+    lines.push(qcCmd);
+    lines.push('');
+  }
+
+  const idxCmd = buildIndexCmd();
+  if (idxCmd) {
+    lines.push('# ── 1. Build Index ─────────────────────────────────');
+    lines.push(idxCmd);
+    lines.push('');
+  }
+
+  const alignCmd = buildAlignCmd();
+  if (alignCmd) {
+    lines.push('# ── 2. Align ────────────────────────────────────────');
+    lines.push(alignCmd);
+    lines.push('');
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/x-shellscript' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${al}_pipeline.sh`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1921,6 +2044,29 @@ function toggleCitations() {
 /* ── tiny XSS-safe escape for attribute values ── */
 function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 
+/* ── Restore UI after state is loaded from hash/localStorage ── */
+function restoreUI() {
+  if (S.expType) {
+    renderTech();
+    unlock('card-tech');
+    document.querySelector(`#card-exptype .choice-btn[onclick*="'${S.expType}'"]`)?.classList.add('active');
+  }
+  if (S.tech) {
+    renderAligners();
+    unlock('card-aligner');
+    document.querySelector(`#card-tech .choice-btn[onclick*="'${S.tech}'"]`)?.classList.add('active');
+  }
+  if (S.aligner) {
+    renderParams();
+    renderPostProc();
+    unlock('card-params');
+    unlock('card-postproc');
+    document.querySelector(`#card-aligner .choice-btn[onclick*="'${S.aligner}'"]`)?.classList.add('active');
+  }
+  switchTab(S.activeTab || 'index');
+  refresh();
+}
+
 /* Init */
 mermaid.initialize({
   startOnLoad: false,
@@ -1937,7 +2083,27 @@ mermaid.initialize({
   },
   flowchart: { curve: 'basis', padding: 12, htmlLabels: true },
 });
-refresh();
+
+(function () {
+  let restored = false;
+  // URL hash takes priority (shareable links)
+  const hash = location.hash.slice(1);
+  if (hash) {
+    try {
+      const saved = JSON.parse(atob(hash));
+      if (saved.expType) { Object.assign(S, saved); restored = true; }
+    } catch(e) {}
+  }
+  // Fall back to localStorage
+  if (!restored) {
+    try {
+      const saved = JSON.parse(localStorage.getItem('ap_state') || '{}');
+      if (saved.expType) { Object.assign(S, saved); restored = true; }
+    } catch(e) {}
+  }
+  if (restored) restoreUI();
+  else refresh();
+})();
 </script>
 </body>
 </html>
