@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alignment Picker — DNA &amp; RNA-seq</title>
+<style>
+:root {
+  --primary: #2563eb;
+  --primary-light: #dbeafe;
+  --primary-dark: #1d4ed8;
+  --success: #16a34a;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --muted: #64748b;
+  --code-bg: #0f172a;
+  --code-text: #e2e8f0;
+  --pro: #16a34a;
+  --con: #dc2626;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+header {
+  background: linear-gradient(135deg, #0f2444 0%, #1e40af 60%, #2563eb 100%);
+  color: #fff;
+  padding: 2.25rem 2rem 2rem;
+  text-align: center;
+}
+header h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.4rem; }
+header p  { opacity: 0.8; font-size: 1rem; }
+
+/* ── Layout ── */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 1.5rem;
+  max-width: 1300px;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem 3rem;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: static; }
+}
+
+/* ── Wizard ── */
+.wizard { display: flex; flex-direction: column; gap: 1rem; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+  transition: opacity 0.2s, filter 0.2s;
+}
+.card.locked {
+  opacity: 0.4;
+  pointer-events: none;
+  filter: grayscale(0.3);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+.step-badge {
+  display: flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; flex-shrink: 0;
+  background: var(--primary); color: #fff;
+  border-radius: 50%; font-size: 0.75rem; font-weight: 700;
+}
+.card-header h2 { font-size: 0.98rem; font-weight: 600; }
+
+/* ── Choice grid ── */
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.75rem;
+}
+.choice-btn {
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: 0.9rem 1rem;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s;
+  text-align: left;
+  font-family: inherit;
+  gap: 0.25rem;
+}
+.choice-btn:hover  { border-color: var(--primary); background: var(--primary-light); }
+.choice-btn.active { border-color: var(--primary); background: var(--primary-light); }
+.btn-name { font-weight: 600; font-size: 0.92rem; color: var(--text); display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem; }
+.choice-btn.active .btn-name { color: var(--primary-dark); }
+.btn-desc { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+
+/* ── Tags ── */
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.tag-fast     { background: #d1fae5; color: #065f46; }
+.tag-popular  { background: #ede9fe; color: #5b21b6; }
+.tag-memory   { background: #fef3c7; color: #92400e; }
+.tag-new      { background: #dbeafe; color: #1d4ed8; }
+
+/* ── Param grid ── */
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 1rem;
+}
+.param-grid + .param-grid { margin-top: 1rem; }
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field label { font-size: 0.77rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.field input, .field select {
+  padding: 0.5rem 0.7rem;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-family: inherit; font-size: 0.88rem; color: var(--text);
+  background: var(--bg);
+  transition: border-color 0.14s;
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--primary); }
+
+/* ── Checkboxes ── */
+.check-group { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.25rem; }
+.check-item  { display: flex; align-items: flex-start; gap: 0.65rem; cursor: pointer; }
+.check-item input[type="checkbox"] {
+  margin-top: 0.2rem; width: 1rem; height: 1rem;
+  cursor: pointer; accent-color: var(--primary); flex-shrink: 0;
+}
+.check-label { font-size: 0.88rem; font-weight: 500; }
+.check-desc  { font-size: 0.77rem; color: var(--muted); margin-top: 0.1rem; line-height: 1.4; }
+
+/* ── Info box ── */
+.info-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.83rem;
+  color: #0369a1;
+  margin-top: 0.9rem;
+  line-height: 1.5;
+}
+.warn-box {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.83rem;
+  color: #92400e;
+  margin-top: 0.75rem;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  position: sticky;
+  top: 1.5rem;
+  display: flex; flex-direction: column; gap: 1rem;
+}
+
+/* Command card */
+.cmd-card { background: var(--code-bg); border-radius: 14px; overflow: hidden; }
+.cmd-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.7rem 1rem;
+  background: rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.cmd-header span { color: #94a3b8; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.copy-btn {
+  padding: 0.32rem 0.85rem;
+  background: var(--primary); color: #fff;
+  border: none; border-radius: 6px;
+  font-family: inherit; font-size: 0.78rem; font-weight: 700;
+  cursor: pointer; transition: background 0.14s;
+}
+.copy-btn:hover   { background: var(--primary-dark); }
+.copy-btn.success { background: var(--success); }
+
+.cmd-body {
+  padding: 1rem 1.1rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.8rem; line-height: 1.75;
+  color: var(--code-text);
+  white-space: pre-wrap; word-break: break-all;
+  min-height: 90px;
+}
+.cmd-body .placeholder { color: #475569; font-style: italic; font-family: inherit; }
+/* Syntax colours */
+.c-comment { color: #475569; font-style: italic; }
+.c-tool    { color: #fbbf24; font-weight: 700; }
+.c-flag    { color: #93c5fd; }
+.c-pipe    { color: #f472b6; }
+.c-value   { color: #86efac; }
+
+/* Pros/cons card */
+.analysis-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.analysis-header {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.analysis-body { padding: 1rem 1.1rem; }
+.analysis-placeholder { color: var(--muted); font-size: 0.875rem; font-style: italic; }
+
+.a-name    { font-size: 1.05rem; font-weight: 700; color: var(--primary); margin-bottom: 0.35rem; }
+.a-tagline { font-size: 0.82rem; color: var(--muted); margin-bottom: 1rem; line-height: 1.5; }
+.list-head { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.35rem; }
+.list-head.pro { color: var(--pro); }
+.list-head.con { color: var(--con); }
+.pro-list, .con-list { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.85rem; }
+.pro-list li { font-size: 0.83rem; line-height: 1.45; }
+.pro-list li::before { content: '✓  '; color: var(--pro); font-weight: 700; }
+.con-list li { font-size: 0.83rem; line-height: 1.45; }
+.con-list li::before { content: '✗  '; color: var(--con); font-weight: 700; }
+.best-for {
+  background: #f0fdf4; border-left: 3px solid var(--pro);
+  padding: 0.55rem 0.75rem; border-radius: 0 7px 7px 0;
+  font-size: 0.8rem; color: #166534; line-height: 1.5;
+}
+.best-for strong { font-weight: 700; }
+
+/* Dynamic warning about approach */
+.approach-notes { margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.note {
+  border-radius: 7px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.note.info    { background: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; }
+.note.warn    { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.note.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Alignment Picker</h1>
+  <p>Build the right alignment command for your DNA or RNA-seq data</p>
+</header>
+
+<div class="layout">
+  <!-- ══════════════ WIZARD ══════════════ -->
+  <div class="wizard">
+
+    <!-- Step 1 -->
+    <div class="card" id="card-exptype">
+      <div class="card-header">
+        <span class="step-badge">1</span>
+        <h2>What type of sequencing data are you working with?</h2>
+      </div>
+      <div class="choice-grid">
+        <button class="choice-btn" onclick="pick('expType','dna',this)">
+          <span class="btn-name">DNA Sequencing</span>
+          <span class="btn-desc">WGS, WES, ChIP-seq, ATAC-seq, amplicon, targeted panels</span>
+        </button>
+        <button class="choice-btn" onclick="pick('expType','rna',this)">
+          <span class="btn-name">RNA Sequencing</span>
+          <span class="btn-desc">RNA-seq, differential expression, transcript quantification</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="card locked" id="card-tech">
+      <div class="card-header">
+        <span class="step-badge">2</span>
+        <h2>What sequencing platform generated your reads?</h2>
+      </div>
+      <div class="choice-grid" id="tech-choices"></div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="card locked" id="card-aligner">
+      <div class="card-header">
+        <span class="step-badge">3</span>
+        <h2>Choose an aligner</h2>
+      </div>
+      <div class="choice-grid" id="aligner-choices"></div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="card locked" id="card-params">
+      <div class="card-header">
+        <span class="step-badge">4</span>
+        <h2>Set parameters</h2>
+      </div>
+      <div id="params-body"></div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="card locked" id="card-postproc">
+      <div class="card-header">
+        <span class="step-badge">5</span>
+        <h2>Post-processing</h2>
+      </div>
+      <div id="postproc-body"></div>
+    </div>
+
+  </div><!-- /wizard -->
+
+  <!-- ══════════════ SIDEBAR ══════════════ -->
+  <div class="sidebar">
+
+    <div class="cmd-card">
+      <div class="cmd-header">
+        <span>Generated Command</span>
+        <button class="copy-btn" id="copy-btn" onclick="copyCmd()">Copy</button>
+      </div>
+      <div class="cmd-body" id="cmd-out">
+        <span class="placeholder">Make selections to build your command →</span>
+      </div>
+    </div>
+
+    <div class="analysis-card">
+      <div class="analysis-header">Analysis &amp; Recommendations</div>
+      <div class="analysis-body" id="analysis-body">
+        <p class="analysis-placeholder">Select an aligner to see pros, cons, and best use cases.</p>
+      </div>
+    </div>
+
+  </div><!-- /sidebar -->
+</div><!-- /layout -->
+
+<script>
+/* ═══════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════ */
+const S = {
+  expType:   null,
+  tech:      null,
+  aligner:   null,
+  // files & index
+  ref:           'reference.fa',
+  refIdx:        'genome_index',
+  genomeDir:     'star_genome_dir',
+  txomeFa:       'transcriptome.fa',
+  salmonIdx:     'salmon_index',
+  kallistoIdx:   'kallisto_index.idx',
+  r1:            'sample_R1.fastq.gz',
+  r2:            'sample_R2.fastq.gz',
+  reads:         'sample.fastq.gz',
+  output:        'output',
+  // options
+  threads:       '8',
+  paired:        true,
+  sortBam:       true,
+  indexBam:      false,
+  markDups:      false,
+  bt2Preset:     '--sensitive',
+  starTwoPass:   false,
+  starQuantMode: false,
+  libType:       'A',
+};
+
+/* ═══════════════════════════════════════════════════
+   ALIGNER DATABASE
+═══════════════════════════════════════════════════ */
+const ALIGNERS = {
+  'bwa-mem2': {
+    label: 'BWA-MEM2', tags: ['fast','new'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Fastest short-read DNA aligner — drop-in BWA-MEM replacement with 2–3× speedup',
+    pros: [
+      '2–3× faster than BWA-MEM with identical algorithmic output',
+      'Excellent sensitivity for SNV and indel variant calling',
+      'Handles chimeric reads and split alignments',
+      'Full SAM/BAM compatibility with GATK, Picard, and friends',
+    ],
+    cons: [
+      'Higher peak memory (~40 GB for human genome)',
+      'Index incompatible with BWA-MEM — must rebuild',
+      'Less field-tested than the original BWA-MEM',
+    ],
+    best: 'Illumina WGS/WES, GATK variant calling pipelines',
+    notes: [],
+  },
+  'bwa-mem': {
+    label: 'BWA-MEM', tags: ['popular'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['illumina','pacbio','ont'],
+    desc: 'Gold-standard DNA aligner; supports Illumina short reads, PacBio, and ONT',
+    pros: [
+      'Gold standard with years of clinical and research validation',
+      'Supports short reads (-default), PacBio (-x pacbio), ONT (-x ont2d)',
+      'Robust chimeric read and split alignment handling',
+      'Lower peak memory than BWA-MEM2 (~28 GB for human genome)',
+    ],
+    cons: [
+      '2–3× slower than BWA-MEM2 for short reads',
+      'Long-read mode less accurate than Minimap2 — consider Minimap2 instead',
+      'Single-threaded alignment core limits per-thread throughput',
+    ],
+    best: 'Illumina WGS/WES; validated clinical workflows requiring mature tools',
+    notes: [],
+  },
+  'bowtie2': {
+    label: 'Bowtie2', tags: ['memory'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Memory-efficient short-read aligner; the standard for ChIP-seq and ATAC-seq',
+    pros: [
+      'Very low memory index (~3 GB for human genome)',
+      'Fast with multiple sensitivity presets (fast → very-sensitive)',
+      'De-facto standard for ChIP-seq, ATAC-seq, CUT&RUN, Hi-C',
+      'Supports local alignment mode for adapter-trimming-free runs',
+    ],
+    cons: [
+      'Lower sensitivity than BWA-MEM for SNV/indel variant calling',
+      'Not recommended for GATK/DeepVariant WGS pipelines',
+      'Not splice-aware — unsuitable for RNA-seq',
+    ],
+    best: 'ChIP-seq, ATAC-seq, CUT&RUN, epigenomics, re-sequencing with small genomes',
+    notes: [],
+  },
+  'minimap2-pb': {
+    label: 'Minimap2 (PacBio)', tags: ['fast'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['pacbio'],
+    desc: 'Best-in-class long-read aligner for PacBio CLR and HiFi/CCS reads',
+    pros: [
+      'Highest accuracy for PacBio long reads',
+      'Use -ax map-hifi for HiFi/CCS, -ax map-pb for CLR',
+      'Handles reads up to megabases; low memory for large genomes',
+      'Fast CIGAR-accurate alignments suitable for structural variant calling',
+    ],
+    cons: [
+      'Not designed for short Illumina reads',
+      'Requires long-read-aware downstream tools (pbsv, DeepVariant-PB)',
+    ],
+    best: 'PacBio WGS, structural variant detection, de novo assembly polishing',
+    notes: [],
+  },
+  'minimap2-ont': {
+    label: 'Minimap2 (ONT)', tags: ['fast'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['ont'],
+    desc: 'Best-in-class long-read aligner for Oxford Nanopore reads',
+    pros: [
+      'Highest accuracy for ONT long reads with -ax map-ont',
+      'Handles highly variable ONT read lengths robustly',
+      'Low memory footprint for large genome alignment',
+      'Compatible with Clair3, Sniffles2, and Nanopolish',
+    ],
+    cons: [
+      'Not designed for short Illumina reads',
+      'Requires ONT-specific variant callers (Clair3, Sniffles2)',
+    ],
+    best: 'ONT WGS, structural variant detection, methylation analysis, metagenomics',
+    notes: [],
+  },
+  'star': {
+    label: 'STAR', tags: ['popular','fast'],
+    dna: false, rna: true, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Ultra-fast splice-aware aligner — the standard for short-read RNA-seq',
+    pros: [
+      'Fastest splice-aware short-read aligner available',
+      'De novo splice junction discovery; 2-pass mode improves sensitivity',
+      'Built-in gene count output with --quantMode GeneCounts',
+      'Used in ENCODE, GTEx, TCGA, and major consortia pipelines',
+      'Handles fusion detection, chimeric reads, and long reads',
+    ],
+    cons: [
+      'High memory (~30 GB genome loaded for human)',
+      'Pre-built genome index required (build time ~30 min for human)',
+      'Large parameter space can be intimidating for new users',
+    ],
+    best: 'Standard RNA-seq DE analysis, junction discovery, ENCODE-style pipelines',
+    notes: [],
+  },
+  'hisat2': {
+    label: 'HISAT2', tags: ['memory'],
+    dna: false, rna: true, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Memory-efficient splice-aware aligner; successor to TopHat2',
+    pros: [
+      'Low memory (~8 GB for human genome)',
+      'Encodes SNP and splice-site information in index for better accuracy',
+      'Pairs naturally with StringTie for transcript assembly and quantification',
+      'Good choice on shared servers with memory constraints',
+    ],
+    cons: [
+      'Slightly lower sensitivity than STAR for novel splice junctions',
+      'Less active development compared to STAR',
+      'No built-in quantification output — needs featureCounts or HTSeq',
+    ],
+    best: 'RNA-seq on memory-constrained systems; StringTie/featureCounts downstream',
+    notes: [],
+  },
+  'salmon': {
+    label: 'Salmon', tags: ['popular','fast'],
+    dna: false, rna: true, quantOnly: true,
+    techs: ['illumina','quantonly'],
+    desc: 'Ultra-fast quasi-mapping for accurate transcript-level quantification',
+    pros: [
+      'Extremely fast — indexes transcriptome, not genome; no BAM needed',
+      'Handles multi-mapping reads via expectation-maximization (EM)',
+      'Corrects GC, positional, and sequence-context biases',
+      'Transcript- and gene-level estimates in one run',
+      'First-class DESeq2 / edgeR integration via tximport / tximeta',
+    ],
+    cons: [
+      'No genome alignment BAM output (alignment mode exists but is slower)',
+      'Requires transcriptome FASTA, not genome — annotation-dependent',
+      'Cannot discover novel splice junctions or unannotated transcripts',
+    ],
+    best: 'Differential expression analysis, large cohorts, quantification-focused workflows',
+    notes: [],
+  },
+  'kallisto': {
+    label: 'Kallisto', tags: ['fast'],
+    dna: false, rna: true, quantOnly: true,
+    techs: ['illumina','quantonly'],
+    desc: 'Pseudoalignment-based transcript quantification — extremely fast and low memory',
+    pros: [
+      'Pseudoalignment is 10–50× faster than alignment-based methods',
+      'Very low memory usage (transcriptome index ~1 GB)',
+      'Bootstrap-based uncertainty estimates with -b flag',
+      'Simple workflow, easy for beginners',
+    ],
+    cons: [
+      'No alignment BAM output',
+      'Slightly lower accuracy than Salmon for complex multi-mappers',
+      'Cannot discover novel transcripts or junctions',
+    ],
+    best: 'Very fast transcript quantification, exploratory analysis, large sample batches',
+    notes: [],
+  },
+  'minimap2-rna': {
+    label: 'Minimap2 (long-read RNA)', tags: ['fast'],
+    dna: false, rna: true, quantOnly: false,
+    techs: ['longrna'],
+    desc: 'Splice-aware long-read RNA aligner for PacBio Iso-Seq and ONT direct RNA / cDNA',
+    pros: [
+      'Best accuracy for long-read splice-aware alignment',
+      'Handles full-length transcript reads (Iso-Seq, ONT cDNA/direct RNA)',
+      'Detects novel isoforms and alternative splicing events',
+      'Works for both PacBio Iso-Seq (splice:hq) and ONT (splice)',
+    ],
+    cons: [
+      'Not appropriate for Illumina short-read RNA-seq',
+      'Requires long-read-specific downstream tools (FLAIR, IsoQuant, TALON)',
+      'Lower throughput per base than short-read methods',
+    ],
+    best: 'Full-length isoform sequencing, novel transcript discovery, alternative splicing',
+    notes: [],
+  },
+};
+
+/* ═══════════════════════════════════════════════════
+   TECH OPTIONS
+═══════════════════════════════════════════════════ */
+const TECH_OPTIONS = {
+  dna: [
+    { val: 'illumina', label: 'Illumina Short Reads', desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
+    { val: 'pacbio',   label: 'PacBio Long Reads',    desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
+    { val: 'ont',      label: 'Oxford Nanopore',      desc: 'ONT reads, ultra-long reads (up to megabases)' },
+  ],
+  rna: [
+    { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
+    { val: 'longrna',  label: 'Long-Read RNA-seq',         desc: 'PacBio Iso-Seq or ONT direct RNA / cDNA sequencing' },
+    { val: 'quantonly',label: 'Quantification Only',       desc: 'Skip genome alignment — directly estimate transcript abundance' },
+  ],
+};
+
+/* ═══════════════════════════════════════════════════
+   UI HELPERS
+═══════════════════════════════════════════════════ */
+function lock(id)   { document.getElementById(id).classList.add('locked'); }
+function unlock(id) { document.getElementById(id).classList.remove('locked'); }
+function clearActive(el) { el.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('active')); }
+
+const TAG_HTML = {
+  fast:    '<span class="tag tag-fast">Fast</span>',
+  popular: '<span class="tag tag-popular">Popular</span>',
+  memory:  '<span class="tag tag-memory">Low memory</span>',
+  new:     '<span class="tag tag-new">New</span>',
+};
+
+/* ═══════════════════════════════════════════════════
+   PICK HANDLERS
+═══════════════════════════════════════════════════ */
+function pick(field, val, btn) {
+  clearActive(btn.closest('.choice-grid'));
+  btn.classList.add('active');
+
+  if (field === 'expType') {
+    S.expType = val;
+    S.tech = null; S.aligner = null;
+    renderTech();
+    unlock('card-tech');
+    lock('card-aligner'); lock('card-params'); lock('card-postproc');
+  } else if (field === 'tech') {
+    S.tech = val;
+    S.aligner = null;
+    renderAligners();
+    unlock('card-aligner');
+    lock('card-params'); lock('card-postproc');
+  } else if (field === 'aligner') {
+    S.aligner = val;
+    renderParams();
+    renderPostProc();
+    unlock('card-params'); unlock('card-postproc');
+  }
+  refresh();
+}
+
+/* ═══════════════════════════════════════════════════
+   RENDER TECH OPTIONS
+═══════════════════════════════════════════════════ */
+function renderTech() {
+  const el = document.getElementById('tech-choices');
+  el.innerHTML = (TECH_OPTIONS[S.expType] || []).map(t => `
+    <button class="choice-btn" onclick="pick('tech','${t.val}',this)">
+      <span class="btn-name">${t.label}</span>
+      <span class="btn-desc">${t.desc}</span>
+    </button>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════
+   RENDER ALIGNER OPTIONS
+═══════════════════════════════════════════════════ */
+function renderAligners() {
+  const el = document.getElementById('aligner-choices');
+  const list = Object.entries(ALIGNERS).filter(([,a]) => {
+    if (S.expType === 'dna' && !a.dna) return false;
+    if (S.expType === 'rna' && !a.rna) return false;
+    if (!a.techs.includes(S.tech)) return false;
+    return true;
+  });
+  el.innerHTML = list.map(([key, a]) => `
+    <button class="choice-btn" onclick="pick('aligner','${key}',this)">
+      <span class="btn-name">${a.label}${(a.tags||[]).map(t=>TAG_HTML[t]||'').join('')}</span>
+      <span class="btn-desc">${a.desc}</span>
+    </button>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════
+   RENDER PARAMS
+═══════════════════════════════════════════════════ */
+function renderParams() {
+  const el   = document.getElementById('params-body');
+  const al   = S.aligner;
+  const info = ALIGNERS[al];
+  if (!info) { el.innerHTML = ''; return; }
+
+  const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
+  const isQuant = info.quantOnly;
+
+  /* ---------- reference/index field ---------- */
+  let refField = '';
+  if (al === 'star') {
+    refField = field('STAR Genome Directory', `<input type="text" value="${esc(S.genomeDir)}" oninput="S.genomeDir=this.value;refresh()">`);
+  } else if (['salmon','kallisto'].includes(al)) {
+    const idxVal  = al === 'salmon' ? S.salmonIdx : S.kallistoIdx;
+    const idxKey  = al === 'salmon' ? 'salmonIdx' : 'kallistoIdx';
+    const idxName = al === 'salmon' ? 'Salmon Index Dir' : 'Kallisto Index (.idx)';
+    refField = field(idxName, `<input type="text" value="${esc(idxVal)}" oninput="S.${idxKey}=this.value;refresh()">`) +
+               field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
+  } else if (['bowtie2','hisat2'].includes(al)) {
+    refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
+  } else {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`);
+  }
+
+  /* ---------- read fields ---------- */
+  const pairedSel = !isLong ? `<div class="field"><label>Read Layout</label>
+    <select onchange="S.paired=(this.value==='paired');renderParams();renderPostProc();refresh()">
+      <option value="paired"  ${S.paired ?'selected':''}>Paired-end (R1 + R2)</option>
+      <option value="single"  ${!S.paired?'selected':''}>Single-end</option>
+    </select></div>` : '';
+
+  let readFields = '';
+  if (!isLong) {
+    readFields = field('Read 1 (R1)', `<input type="text" value="${esc(S.r1)}" oninput="S.r1=this.value;refresh()">`)
+               + (S.paired ? field('Read 2 (R2)', `<input type="text" value="${esc(S.r2)}" oninput="S.r2=this.value;refresh()">`) : '');
+  } else {
+    readFields = field('Reads FASTQ', `<input type="text" value="${esc(S.reads)}" oninput="S.reads=this.value;refresh()">`);
+  }
+
+  /* ---------- aligner-specific options ---------- */
+  let extraOpts = '';
+  if (al === 'star') {
+    extraOpts = `<div class="check-group" style="margin-top:1.1rem;">
+      ${check('starTwoPass', '2-pass mode', 'Runs STAR twice; improves sensitivity for novel splice junctions at the cost of ~2× runtime')}
+      ${check('starQuantMode', 'Gene count output (--quantMode GeneCounts)', 'Output per-gene read counts alongside the BAM; convenient for DE analysis')}
+    </div>`;
+  } else if (al === 'bowtie2') {
+    extraOpts = `<div class="param-grid" style="margin-top:1rem;">
+      <div class="field"><label>Sensitivity Preset</label>
+        <select onchange="S.bt2Preset=this.value;refresh()">
+          <option value="--sensitive"      ${S.bt2Preset==='--sensitive'     ?'selected':''}>--sensitive (default)</option>
+          <option value="--very-sensitive" ${S.bt2Preset==='--very-sensitive'?'selected':''}>--very-sensitive (slower, more accurate)</option>
+          <option value="--fast"           ${S.bt2Preset==='--fast'          ?'selected':''}>--fast</option>
+          <option value="--very-fast"      ${S.bt2Preset==='--very-fast'     ?'selected':''}>--very-fast (fastest)</option>
+        </select>
+      </div>
+    </div>`;
+  } else if (al === 'salmon') {
+    extraOpts = `<div class="param-grid" style="margin-top:1rem;">
+      <div class="field"><label>Library / Strand Type</label>
+        <select onchange="S.libType=this.value;refresh()">
+          <option value="A"   ${S.libType==='A'  ?'selected':''}>A — Auto-detect (recommended)</option>
+          <option value="ISF" ${S.libType==='ISF'?'selected':''}>ISF — Stranded forward (dUTP / TruSeq)</option>
+          <option value="ISR" ${S.libType==='ISR'?'selected':''}>ISR — Stranded reverse</option>
+          <option value="IU"  ${S.libType==='IU' ?'selected':''}>IU — Unstranded paired-end</option>
+          <option value="U"   ${S.libType==='U'  ?'selected':''}>U — Unstranded single-end</option>
+          <option value="SF"  ${S.libType==='SF' ?'selected':''}>SF — Single-end stranded forward</option>
+        </select>
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="param-grid">
+      ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${S.threads}" oninput="S.threads=this.value;refresh()">`)}
+      ${refField}
+      ${field('Output Prefix', `<input type="text" value="${esc(S.output)}" oninput="S.output=this.value;refresh()">`)}
+      ${pairedSel}
+    </div>
+    <div class="param-grid">${readFields}</div>
+    ${extraOpts}`;
+}
+
+function field(label, inputHtml) {
+  return `<div class="field"><label>${label}</label>${inputHtml}</div>`;
+}
+
+function check(key, label, desc) {
+  return `<label class="check-item">
+    <input type="checkbox" ${S[key]?'checked':''} onchange="S.${key}=this.checked;refresh()">
+    <div><div class="check-label">${label}</div><div class="check-desc">${desc}</div></div>
+  </label>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   RENDER POST-PROC
+═══════════════════════════════════════════════════ */
+function renderPostProc() {
+  const el   = document.getElementById('postproc-body');
+  const info = ALIGNERS[S.aligner];
+  if (!info) { el.innerHTML = ''; return; }
+
+  if (info.quantOnly) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
+      Quantification-only tools (Salmon, Kallisto) produce abundance tables, not BAM files.
+      BAM post-processing steps are not applicable.</p>`;
+    return;
+  }
+
+  el.innerHTML = `<div class="check-group">
+    ${check('sortBam', 'Sort BAM by coordinate (samtools sort)', 'Required by most downstream tools: GATK, featureCounts, HTSeq, IGV')}
+    ${check('indexBam', 'Index BAM (samtools index)', 'Creates .bai index for random-access queries; required for IGV, most variant callers')}
+    ${check('markDups', 'Mark PCR duplicates (samtools markdup)', 'Flags optical/PCR duplicates — recommended for WGS/WES; generally NOT for ChIP-seq or ATAC-seq')}
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD COMMAND
+═══════════════════════════════════════════════════ */
+function buildCommand() {
+  const al = S.aligner;
+  if (!al) return null;
+
+  const T   = S.threads || '8';
+  const OUT = S.output  || 'output';
+  const REF = S.ref;
+  const R1  = S.r1, R2 = S.r2;
+  const LONG = S.reads;
+  const reads = S.paired ? `${R1} ${R2}` : R1;
+
+  let lines = [];
+
+  /* ── helpers ── */
+  const samSort = `samtools sort -@ ${T} -o ${OUT}.bam`;
+  const samView = `samtools view -@ ${T} -bS -o ${OUT}.bam`;
+  const pipe    = (cmd) => S.sortBam
+    ? `${cmd} \\\n  | ${samSort}`
+    : `${cmd} \\\n  | ${samView}`;
+
+  switch (al) {
+
+    case 'bwa-mem2':
+      lines.push('# Index reference (first time only)');
+      lines.push(`bwa-mem2 index ${REF}`);
+      lines.push('');
+      lines.push('# Align reads');
+      lines.push(pipe(`bwa-mem2 mem -t ${T} ${REF} ${reads}`));
+      break;
+
+    case 'bwa-mem': {
+      const xFlag = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
+      const inReads = S.tech === 'illumina' ? reads : LONG;
+      lines.push('# Index reference (first time only)');
+      lines.push(`bwa index ${REF}`);
+      lines.push('');
+      lines.push('# Align reads');
+      lines.push(pipe(`bwa mem${xFlag} -t ${T} ${REF} ${inReads}`));
+      break;
+    }
+
+    case 'bowtie2': {
+      const preset = S.bt2Preset || '--sensitive';
+      const inArg  = S.paired
+        ? `-1 ${R1} -2 ${R2}`
+        : `-U ${R1}`;
+      lines.push('# Build index (first time only)');
+      lines.push(`bowtie2-build ${REF} ${S.refIdx}`);
+      lines.push('');
+      lines.push('# Align reads');
+      lines.push(pipe(`bowtie2 ${preset} -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
+      break;
+    }
+
+    case 'minimap2-pb':
+      lines.push('# Align PacBio reads');
+      lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
+      lines.push(pipe(`minimap2 -ax map-hifi -t ${T} ${REF} ${LONG}`));
+      break;
+
+    case 'minimap2-ont':
+      lines.push('# Align Oxford Nanopore reads');
+      lines.push(pipe(`minimap2 -ax map-ont -t ${T} ${REF} ${LONG}`));
+      break;
+
+    case 'star': {
+      const sorted = S.sortBam ? 'SortedByCoordinate' : 'Unsorted';
+      const gz     = (R1 || '').endsWith('.gz');
+      lines.push('# Build genome index (first time only, ~30 min for human)');
+      lines.push(`STAR --runMode genomeGenerate \\`);
+      lines.push(`  --genomeDir ${S.genomeDir} \\`);
+      lines.push(`  --genomeFastaFiles ${REF} \\`);
+      lines.push(`  --sjdbGTFfile annotation.gtf \\`);
+      lines.push(`  --runThreadN ${T}`);
+      lines.push('');
+      lines.push('# Align reads');
+      let star = `STAR --runThreadN ${T} \\\n`;
+      star += `  --genomeDir ${S.genomeDir} \\\n`;
+      star += `  --readFilesIn ${S.paired ? `${R1} ${R2}` : R1}`;
+      if (gz) star += ` \\\n  --readFilesCommand zcat`;
+      star += ` \\\n  --outSAMtype BAM ${sorted}`;
+      star += ` \\\n  --outFileNamePrefix ${OUT}/`;
+      if (S.starTwoPass)   star += ` \\\n  --twopassMode Basic`;
+      if (S.starQuantMode) star += ` \\\n  --quantMode GeneCounts`;
+      lines.push(star);
+      break;
+    }
+
+    case 'hisat2': {
+      const inArg = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
+      lines.push('# Build index (first time only)');
+      lines.push(`hisat2-build ${REF} ${S.refIdx}`);
+      lines.push('');
+      lines.push('# Align reads');
+      lines.push(pipe(`hisat2 -p ${T} -x ${S.refIdx} \\\n  ${inArg}`));
+      break;
+    }
+
+    case 'salmon': {
+      const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-r ${R1}`;
+      lines.push('# Build index (first time only)');
+      lines.push(`salmon index \\\n  -t ${S.txomeFa} \\\n  -i ${S.salmonIdx} \\\n  -p ${T}`);
+      lines.push('');
+      lines.push('# Quantify');
+      lines.push(`salmon quant \\\n  -i ${S.salmonIdx} \\\n  -l ${S.libType || 'A'} \\\n  ${inArg} \\\n  -p ${T} \\\n  --validateMappings \\\n  -o ${OUT}_salmon`);
+      break;
+    }
+
+    case 'kallisto': {
+      lines.push('# Build index (first time only)');
+      lines.push(`kallisto index -i ${S.kallistoIdx} ${S.txomeFa}`);
+      lines.push('');
+      lines.push('# Quantify');
+      let kl = `kallisto quant \\\n  -i ${S.kallistoIdx} \\\n  -o ${OUT}_kallisto \\\n  -t ${T}`;
+      if (!S.paired) kl += ` \\\n  --single -l 200 -s 20`;
+      kl += ` \\\n  ${S.paired ? `${R1} ${R2}` : R1}`;
+      lines.push(kl);
+      break;
+    }
+
+    case 'minimap2-rna':
+      lines.push('# Align long-read RNA-seq (splice-aware)');
+      lines.push('# -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
+      lines.push(pipe(`minimap2 -ax splice:hq -t ${T} ${REF} ${LONG}`));
+      break;
+
+    default:
+      return null;
+  }
+
+  /* ── Post-processing ── */
+  const isQuant = ALIGNERS[al]?.quantOnly;
+  if (!isQuant) {
+    // STAR handles its own sorting, so skip samtools sort for STAR if sortBam is on
+    const starSorted = (al === 'star' && S.sortBam);
+    const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
+    const postLines = [];
+
+    if (S.markDups) {
+      if (!S.sortBam) {
+        postLines.push('# WARNING: markdup requires a coordinate-sorted BAM — enable "Sort BAM" above');
+      } else {
+        postLines.push(`samtools markdup -@ ${T} ${OUT}.bam ${OUT}.markdup.bam`);
+      }
+    }
+
+    if (S.indexBam) {
+      postLines.push(`samtools index -@ ${T} ${finalBam}`);
+    }
+
+    if (postLines.length) {
+      lines.push('');
+      lines.push('# Post-processing');
+      lines.push(...postLines);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/* ═══════════════════════════════════════════════════
+   SYNTAX HIGHLIGHT
+═══════════════════════════════════════════════════ */
+const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools'];
+
+function highlight(raw) {
+  const e = raw
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;');
+
+  return e
+    // comments (must come first)
+    .replace(/(#[^\n]+)/g, '<span class="c-comment">$1</span>')
+    // tool names at line start
+    .replace(new RegExp(`^(${TOOLS.join('|')})`, 'gm'), '<span class="c-tool">$1</span>')
+    // flags
+    .replace(/(\s)(--?[a-zA-Z][a-zA-Z0-9-]*)/g, '$1<span class="c-flag">$2</span>')
+    // backslash continuation & pipes
+    .replace(/(\\$)/gm, '<span class="c-pipe">\\</span>')
+    .replace(/( \| )/g, ' <span class="c-pipe">|</span> ');
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD DYNAMIC ANALYSIS NOTES
+═══════════════════════════════════════════════════ */
+function buildNotes() {
+  const notes = [];
+  const al = S.aligner;
+  if (!al) return notes;
+  const info = ALIGNERS[al];
+
+  // Mark dups on ATAC/ChIP-seq
+  if (S.markDups && S.expType === 'dna' && al === 'bowtie2') {
+    notes.push({ type: 'warn', text: '<strong>Duplicate marking:</strong> For ChIP-seq and ATAC-seq, PCR duplicates should generally be <em>removed</em> rather than just marked. Consider <code>samtools markdup -r</code> or Picard MarkDuplicates with REMOVE_DUPLICATES=true.' });
+  }
+
+  // Sort required for markdup
+  if (S.markDups && !S.sortBam && !info.quantOnly) {
+    notes.push({ type: 'warn', text: '<strong>Sort required:</strong> <code>samtools markdup</code> requires coordinate-sorted input. Enable "Sort BAM by coordinate" above.' });
+  }
+
+  // Paired-end recommended
+  if (!S.paired && ['bwa-mem2','bwa-mem','star','hisat2'].includes(al)) {
+    notes.push({ type: 'info', text: '<strong>Paired-end recommended:</strong> Most RNA-seq and WGS workflows use paired-end reads for better alignment accuracy and insert-size estimation.' });
+  }
+
+  // STAR 2-pass note
+  if (al === 'star' && !S.starTwoPass) {
+    notes.push({ type: 'info', text: '<strong>2-pass mode:</strong> Enable 2-pass mode for improved detection of novel splice junctions, especially for de novo transcriptomics or samples without a well-annotated GTF.' });
+  }
+
+  // Salmon validateMappings
+  if (al === 'salmon') {
+    notes.push({ type: 'success', text: '<strong>--validateMappings</strong> is included by default; it improves accuracy by validating quasi-mappings with lightweight alignment. Slightly slower but recommended.' });
+  }
+
+  // BWA-MEM long read warning
+  if (al === 'bwa-mem' && ['pacbio','ont'].includes(S.tech)) {
+    notes.push({ type: 'warn', text: '<strong>Consider Minimap2:</strong> For PacBio and ONT long reads, Minimap2 generally provides higher accuracy and speed than BWA-MEM\'s long-read modes.' });
+  }
+
+  // Long reads + indexBam
+  if (['minimap2-pb','minimap2-ont','minimap2-rna'].includes(al) && S.indexBam && !S.sortBam) {
+    notes.push({ type: 'warn', text: '<strong>Index requires sorted BAM:</strong> <code>samtools index</code> requires a coordinate-sorted BAM. Enable "Sort BAM" above.' });
+  }
+
+  return notes;
+}
+
+/* ═══════════════════════════════════════════════════
+   REFRESH EVERYTHING
+═══════════════════════════════════════════════════ */
+function refresh() {
+  // Command
+  const cmd = buildCommand();
+  const cmdEl = document.getElementById('cmd-out');
+  if (!cmd) {
+    cmdEl.innerHTML = '<span class="placeholder">Make selections to build your command →</span>';
+  } else {
+    cmdEl.innerHTML = highlight(cmd);
+  }
+
+  // Analysis
+  const bodyEl = document.getElementById('analysis-body');
+  const al = S.aligner;
+  if (!al || !ALIGNERS[al]) {
+    bodyEl.innerHTML = '<p class="analysis-placeholder">Select an aligner to see pros, cons, and best use cases.</p>';
+    return;
+  }
+
+  const info = ALIGNERS[al];
+  const notes = buildNotes();
+  const notesHtml = notes.length
+    ? `<div class="approach-notes">${notes.map(n=>`<div class="note ${n.type}">${n.text}</div>`).join('')}</div>`
+    : '';
+
+  bodyEl.innerHTML = `
+    <div class="a-name">${info.label}</div>
+    <div class="a-tagline">${info.desc}</div>
+    <div class="list-head pro">Pros</div>
+    <ul class="pro-list">${info.pros.map(p=>`<li>${p}</li>`).join('')}</ul>
+    <div class="list-head con">Cons</div>
+    <ul class="con-list">${info.cons.map(c=>`<li>${c}</li>`).join('')}</ul>
+    <div class="best-for"><strong>Best for:</strong> ${info.best}</div>
+    ${notesHtml}`;
+}
+
+/* ═══════════════════════════════════════════════════
+   COPY
+═══════════════════════════════════════════════════ */
+function copyCmd() {
+  const cmd = buildCommand();
+  if (!cmd) return;
+  navigator.clipboard.writeText(cmd).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('success');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('success'); }, 2000);
+  });
+}
+
+/* ── tiny XSS-safe escape for attribute values ── */
+function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
+
+/* Init */
+refresh();
+</script>
+</body>
+</html>
