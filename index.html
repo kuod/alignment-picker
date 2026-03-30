@@ -601,6 +601,22 @@ header p  { opacity: 0.8; font-size: 1rem; }
               <a href="https://doi.org/10.1093/gigascience/giab008" target="_blank">doi:10.1093/gigascience/giab008</a>
             </td>
           </tr>
+          <tr>
+            <td class="cite-tool">vg / vg giraffe</td>
+            <td class="cite-ref">
+              Sirén J, et al. <em>Pangenomics enables genotyping of known structural variants in 5202 diverse genomes.</em>
+              <span class="cite-journal">Science</span> 374(6574):abg8871, 2021.
+              <a href="https://doi.org/10.1126/science.abg8871" target="_blank">doi:10.1126/science.abg8871</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">GraphAligner</td>
+            <td class="cite-ref">
+              Rautiainen M, Marschall T. <em>GraphAligner: rapid and versatile sequence-to-graph alignment.</em>
+              <span class="cite-journal">Genome Biology</span> 21:253, 2020.
+              <a href="https://doi.org/10.1186/s13059-020-02157-2" target="_blank">doi:10.1186/s13059-020-02157-2</a>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -641,6 +657,10 @@ const S = {
   libType:       'A',
   genomeSizeGb:  '',
   qcTool:        'fastp',
+  // graph genome
+  vcfFile:       'variants.vcf.gz',
+  vgIdxPrefix:   'graph_index',
+  graphFile:     'pangenome.gfa',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -922,6 +942,62 @@ const ALIGNERS = {
       note: 'Optional. Use splice:hq preset index for PacBio Iso-Seq; splice for ONT.',
     },
   },
+  'vg-giraffe': {
+    label: 'vg giraffe', tags: ['new'],
+    dna: true, rna: false, quantOnly: false, graphOutput: false,
+    techs: ['pangenome'],
+    desc: 'Haplotype-aware short-read alignment to a pangenome variation graph',
+    pros: [
+      'Reduces reference bias — critical for diverse or admixed cohorts',
+      'GBWT haplotype-aware alignment improves accuracy in repeat regions',
+      'Speed comparable to BWA-MEM2; faster than vg map',
+      'Supported in GATK and DeepVariant pangenome workflows',
+      'vg autoindex builds the full index from a VCF + FASTA in one command',
+    ],
+    cons: [
+      'Requires a phased VCF of known variants (e.g., 1000 Genomes, gnomAD)',
+      'Larger and more complex index than linear aligners (~50 GB for human)',
+      'Newer tool — less field-tested than BWA-MEM2 in clinical pipelines',
+      'Learning curve: graph genome concepts add complexity',
+    ],
+    best: 'Population genetics, diverse cohorts, pangenome-aware variant calling, HPRC graph workflows',
+    notes: [],
+    idx: {
+      cmd: s => `vg autoindex \\\n  --workflow giraffe \\\n  --vcf ${s.vcfFile} \\\n  --ref ${s.ref} \\\n  --prefix ${s.vgIdxPrefix} \\\n  --threads ${s.threads}`,
+      mem: '~50 GB (human + 1000G variants)',
+      time: '~2–4 h (human genome)',
+      outputs: '${prefix}.giraffe.gbz, ${prefix}.dist, ${prefix}.min',
+      note: 'vg autoindex handles graph construction, GBWT haplotype indexing, and minimizer index in one command. Use a phased VCF (e.g., 1000 Genomes) for best haplotype representation.',
+    },
+  },
+  'graphaligner': {
+    label: 'GraphAligner', tags: ['new'],
+    dna: true, rna: false, quantOnly: false, graphOutput: true,
+    techs: ['pangenome'],
+    desc: 'Long-read aligner to pangenome graphs — PacBio HiFi and ONT',
+    pros: [
+      'Best accuracy for long-read alignment to variation graphs',
+      'Handles PacBio HiFi, CLR, and ONT reads natively',
+      'Graph-aware alignment captures variation absent from a linear reference',
+      'Supports VG variation graphs, de Bruijn graphs, and GFA input',
+      'Used in HPRC and T2T long-read pangenome pipelines',
+    ],
+    cons: [
+      'Outputs GAF/GAM — conversion to BAM requires vg surject',
+      'Higher memory and runtime than Minimap2',
+      'Requires a pre-built GFA graph file',
+      'Smaller community than Minimap2; fewer downstream tool integrations',
+    ],
+    best: 'Long-read pangenome alignment, structural variant discovery in diverse cohorts',
+    notes: [],
+    idx: {
+      cmd: s => `# Build a variation graph (GFA) from reference + VCF\nvg construct \\\n  -r ${s.ref} \\\n  -v ${s.vcfFile} \\\n  -t ${s.threads} \\\n  | vg view - > ${s.graphFile}\n\n# Or supply an existing pangenome GFA (HPRC, Minigraph-Cactus, etc.)`,
+      mem: '~30 GB (vg construct, human genome)',
+      time: '~1–2 h (human genome)',
+      outputs: 'graph.gfa (GFA v1)',
+      note: 'GraphAligner takes a GFA graph as input. Build one from reference + VCF using vg construct, or use a pangenome GFA from HPRC or Minigraph-Cactus. GFA files for human pangenomes can exceed 50 GB.',
+    },
+  },
 };
 
 /* ═══════════════════════════════════════════════════
@@ -929,9 +1005,10 @@ const ALIGNERS = {
 ═══════════════════════════════════════════════════ */
 const TECH_OPTIONS = {
   dna: [
-    { val: 'illumina', label: 'Illumina Short Reads', desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
-    { val: 'pacbio',   label: 'PacBio Long Reads',    desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
-    { val: 'ont',      label: 'Oxford Nanopore',      desc: 'ONT reads, ultra-long reads (up to megabases)' },
+    { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
+    { val: 'pacbio',    label: 'PacBio Long Reads',       desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
+    { val: 'ont',       label: 'Oxford Nanopore',         desc: 'ONT reads, ultra-long reads (up to megabases)' },
+    { val: 'pangenome', label: 'Pangenome / Graph Genome', desc: 'Align to a variation graph (VCF + reference) for reduced reference bias' },
   ],
   rna: [
     { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
@@ -1093,6 +1170,42 @@ const VERBOSE_OPTS = {
       why: 'Learns and corrects a sequence-specific bias model. Similar to Salmon\'s --seqBias. Recommended for libraries showing strong positional bias at fragment start sites.',
       cmd: () => '--bias' },
   ],
+  'vg-giraffe': [
+    { key: 'sample', type: 'text', flag: '--sample', label: 'Sample name',
+      placeholder: 'NA12878',
+      why: 'Embeds a sample name in the output SAM/BAM header. Required for downstream vg call and GATK pangenome variant calling. Equivalent to the SM field in a BAM read group.',
+      cmd: v => `--sample '${v}'` },
+    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group (RG line)',
+      placeholder: 'ID:sample1\tLB:lib1\tPL:ILLUMINA',
+      why: 'Adds a full @RG header line to the output. Required for GATK HaplotypeCaller. Use tab-separated fields matching the SAM spec.',
+      cmd: v => `--read-group '${v}'` },
+    { key: 'nosec', type: 'check', flag: '--no-secondary', label: 'Suppress secondary alignments',
+      why: 'Limits output to primary alignments only. Reduces file size and simplifies variant calling pipelines that discard secondary reads anyway.',
+      cmd: () => '--no-secondary' },
+    { key: 'mapq', type: 'select', flag: '--mapq-method', label: 'MAPQ method',
+      options: [
+        { val: 'fast',    label: 'fast (default)' },
+        { val: 'exact',   label: 'exact (more accurate, slower)' },
+        { val: 'adaptive', label: 'adaptive (balanced)' },
+      ],
+      why: '"fast" is the default and sufficient for most variant calling. "exact" computes mapping quality more accurately but is significantly slower — use when MAPQ precision is critical (e.g., allele-specific expression, difficult regions).',
+      cmd: v => `--mapq-method ${v}` },
+  ],
+  'graphaligner': [
+    { key: 'preset', type: 'select', flag: '-x', label: 'Graph type preset',
+      options: [
+        { val: 'vg',  label: 'vg — variation / sequence graph (default)' },
+        { val: 'dbg', label: 'dbg — de Bruijn graph' },
+      ],
+      why: 'Selects alignment parameters tuned to the graph type. Use vg for variation graphs (built with vg construct or from HPRC). Use dbg for de Bruijn graphs from genome assemblers.',
+      cmd: v => `-x ${v}` },
+    { key: 'bw', type: 'val', flag: '--bandwidth', label: 'Alignment bandwidth', defaultVal: '50',
+      why: 'Controls the DP band width during graph alignment. Larger values improve sensitivity for reads with high error rates (ONT) or complex indels at the cost of runtime. Default 50 is good for HiFi; increase to 100+ for ONT.',
+      cmd: v => `--bandwidth ${v}` },
+    { key: 'multimap', type: 'val', flag: '--multimap-score-fraction', label: 'Multimapping score fraction', defaultVal: '0.99',
+      why: 'Reports secondary alignments with score ≥ this fraction of the primary score. Set to 1.0 to suppress all secondary alignments. Useful when studying repetitive or duplicated graph regions.',
+      cmd: v => `--multimap-score-fraction ${v}` },
+  ],
   'minimap2-rna': [
     { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
       why: 'Limits output to primary and supplementary alignments. For full-length isoform analysis, secondary alignments are typically noise and their inclusion can confuse transcript assemblers (FLAIR, IsoQuant, TALON).',
@@ -1188,7 +1301,7 @@ function renderParams() {
   const info = ALIGNERS[al];
   if (!info) { el.innerHTML = ''; return; }
 
-  const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
+  const isLong  = ['pacbio','ont','longrna'].includes(S.tech) || al === 'graphaligner';
   const isQuant = info.quantOnly;
 
   /* ---------- reference/index field ---------- */
@@ -1206,6 +1319,14 @@ function renderParams() {
                field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
   } else if (['bowtie2','hisat2'].includes(al)) {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
+  } else if (al === 'vg-giraffe') {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
+               field('Index Prefix', `<input type="text" value="${esc(S.vgIdxPrefix)}" oninput="S.vgIdxPrefix=this.value;refresh()">`);
+  } else if (al === 'graphaligner') {
+    refField = field('Graph File (.gfa)', `<input type="text" value="${esc(S.graphFile)}" oninput="S.graphFile=this.value;refresh()">`) +
+               field('Reference FASTA <span style="font-weight:400;color:var(--muted)">(for index build)</span>', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Variants VCF <span style="font-weight:400;color:var(--muted)">(for index build)</span>', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`);
   } else {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`);
   }
@@ -1408,6 +1529,13 @@ function renderPostProc() {
     return;
   }
 
+  if (info.graphOutput) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
+      GraphAligner outputs GAF format, not BAM. BAM conversion requires
+      <code>vg surject</code> — the align command includes a commented example.</p>`;
+    return;
+  }
+
   el.innerHTML = `<div class="check-group">
     ${check('sortBam', 'Sort BAM by coordinate (samtools sort)', 'Required by most downstream tools: GATK, featureCounts, HTSeq, IGV')}
     ${check('indexBam', 'Index BAM (samtools index)', 'Creates .bai index for random-access queries; required for IGV, most variant callers')}
@@ -1555,12 +1683,25 @@ function buildAlignCmd() {
       lines.push(pipe(`minimap2 -ax splice:hq${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
       break;
 
+    case 'vg-giraffe': {
+      const inFlags = S.paired ? `-f ${R1} \\\n  -f ${R2}` : `-f ${R1}`;
+      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.min \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
+      break;
+    }
+
+    case 'graphaligner':
+      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf \\\n  --output-format GAF \\\n  -x vg${vfml('graphaligner')} \\\n  -t ${T}`);
+      lines.push('');
+      lines.push(`# To convert GAF → BAM (requires a GBZ index for vg surject):`);
+      lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -F ${OUT}.gaf -b -t ${T} \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
+      break;
+
     default:
       return null;
   }
 
   /* ── Post-processing ── */
-  const isQuant = ALIGNERS[al]?.quantOnly;
+  const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput;
   if (!isQuant) {
     const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
     const postLines = [];
@@ -1590,7 +1731,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt'];
+const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner'];
 
 function highlight(raw) {
   const e = raw
@@ -2001,6 +2142,41 @@ ${bamOut('MM2')}${post('BAM')}
     REF --> MM2
     MMI -.->|use in place of FASTA| MM2
     LR --> MM2`;
+
+    case 'vg-giraffe': {
+      const VPFX = dl(S.vgIdxPrefix || 'graph_index');
+      const VCF  = dl(S.vcfFile     || 'variants.vcf.gz');
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    VCF(["${VCF}"]):::file
+${srIn}
+    VAUTO["vg autoindex<br/>--workflow giraffe"]:::tool
+    GBZ(["${VPFX}.giraffe.gbz<br/>.dist  .min"]):::idx
+    VGG["vg giraffe -t ${T}"]:::tool
+${bamOut('VGG')}${post('BAM')}
+    REF --> VAUTO
+    VCF --> VAUTO
+    VAUTO --> GBZ --> VGG
+    ${srArr} --> VGG`;
+    }
+
+    case 'graphaligner': {
+      const GFA = dl(S.graphFile || 'pangenome.gfa');
+      const VCF = dl(S.vcfFile   || 'variants.vcf.gz');
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    VCF(["${VCF}"]):::file
+    LR(["${LONG}"]):::file
+    VCON["vg construct -t ${T}"]:::tool
+    GFA2(["${GFA}"]):::idx
+    GA["GraphAligner -t ${T}"]:::tool
+    GAF(["${OUT}.gaf"]):::out
+    REF --> VCON
+    VCF --> VCON
+    VCON --> GFA2 --> GA
+    LR --> GA
+    GA --> GAF`;
+    }
 
     default: return null;
   }
