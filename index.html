@@ -548,11 +548,30 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">Strobealign</td>
+            <td class="cite-ref">
+              Sahlin K. <em>Strobealign: flexible seed size enables ultra-fast and accurate read alignment.</em>
+              <span class="cite-journal">Genome Biology</span> 23:260, 2022.
+              <a href="https://doi.org/10.1186/s13059-022-02831-7" target="_blank">doi:10.1186/s13059-022-02831-7</a>
+              <br>For v0.17.0+: Tolstoganov I, et al. <em>Multi-context seeds enable fast and high-accuracy read mapping.</em>
+              <span class="cite-journal">Genome Biology</span> 27:118, 2026.
+              <a href="https://doi.org/10.1186/s13059-026-04017-x" target="_blank">doi:10.1186/s13059-026-04017-x</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">Bowtie2</td>
             <td class="cite-ref">
               Langmead B, Salzberg SL. <em>Fast gapped-read alignment with Bowtie 2.</em>
               <span class="cite-journal">Nature Methods</span> 9, 357–359, 2012.
               <a href="https://doi.org/10.1038/nmeth.1923" target="_blank">doi:10.1038/nmeth.1923</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Bowtie</td>
+            <td class="cite-ref">
+              Langmead B, Trapnell C, Pop M, Salzberg SL. <em>Ultrafast and memory-efficient alignment of short DNA sequences to the human genome.</em>
+              <span class="cite-journal">Genome Biology</span> 10:R25, 2009.
+              <a href="https://doi.org/10.1186/gb-2009-10-3-r25" target="_blank">doi:10.1186/gb-2009-10-3-r25</a>
             </td>
           </tr>
           <tr>
@@ -620,6 +639,13 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">DRAGMAP</td>
+            <td class="cite-ref">
+              Open-source DRAGEN mapper (Illumina). No dedicated paper — cite the DRAGEN paper above (Behera et al. 2024) and the
+              <a href="https://github.com/Illumina/DRAGMAP" target="_blank">github.com/Illumina/DRAGMAP</a> repository with the version used.
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">vg / vg giraffe</td>
             <td class="cite-ref">
               Sirén J, et al. <em>Pangenomics enables genotyping of known structural variants in 5202 diverse genomes.</em>
@@ -633,6 +659,17 @@ header p  { opacity: 0.8; font-size: 1rem; }
               Rautiainen M, Marschall T. <em>GraphAligner: rapid and versatile sequence-to-graph alignment.</em>
               <span class="cite-journal">Genome Biology</span> 21:253, 2020.
               <a href="https://doi.org/10.1186/s13059-020-02157-2" target="_blank">doi:10.1186/s13059-020-02157-2</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">Winnowmap2</td>
+            <td class="cite-ref">
+              Jain C, Rhie A, Hansen NF, Koren S, Phillippy AM. <em>Long-read mapping to repetitive reference sequences using Winnowmap2.</em>
+              <span class="cite-journal">Nature Methods</span> 19, 705–710, 2022.
+              <a href="https://doi.org/10.1038/s41592-022-01457-8" target="_blank">doi:10.1038/s41592-022-01457-8</a>
+              <br>Jain C, et al. <em>Weighted minimizer sampling improves long read mapping.</em>
+              <span class="cite-journal">Bioinformatics</span> 36(Suppl 1):i111–i118, 2020.
+              <a href="https://doi.org/10.1093/bioinformatics/btaa435" target="_blank">doi:10.1093/bioinformatics/btaa435</a>
             </td>
           </tr>
         </tbody>
@@ -687,6 +724,8 @@ const S = {
   // DRAGEN
   dragenRefDir:  'dragen_hash_table',
   dragenVC:      true,
+  // DRAGMAP (open-source DRAGEN mapper)
+  dragmapRefDir: 'dragmap_hash_table',
   // Sample / read group (shared by all BAM-producing aligners; empty sample = no RG)
   rgSample:      '',
   rgId:          '',
@@ -751,6 +790,32 @@ const ALIGNERS = {
       note: 'For hg38, Illumina ships prebuilt multigenome (graph) hash tables that are recommended over building your own. Hash tables are tied to the DRAGEN software version.',
     },
   },
+  'dragmap': {
+    label: 'DRAGMAP', tags: ['new'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Open-source DRAGEN mapper/aligner (dragen-os) — runs on commodity CPUs, no license',
+    pros: [
+      'Same seed-and-extend hash-table algorithm as the DRAGEN mapper, free and open source (GPL-3.0)',
+      'No FPGA or license — runs on ordinary x86-64 servers and HPC nodes',
+      'Aligner of choice for the DRAGEN-GATK germline workflow (HaplotypeCaller --dragen-mode)',
+      'Streams SAM to stdout, so it slots into the usual samtools sort / markdup pipeline',
+    ],
+    cons: [
+      'Alignment only — no built-in sorting, duplicate marking, or variant calling',
+      'Slower than BWA-MEM2 on CPU; the speed of DRAGEN comes from its FPGA, not the algorithm',
+      'Hash table build needs ≥64 GB RAM for a human genome; x86-64 Linux only',
+      'Writes only ID and SM to the @RG line; last release 1.3.0 (2022), outside pull requests not accepted',
+    ],
+    best: 'DRAGEN-GATK germline pipelines and reproducing DRAGEN alignments without DRAGEN hardware',
+    notes: [],
+    idx: {
+      cmd: s => `mkdir -p ${s.dragmapRefDir}\ndragen-os \\\n  --build-hash-table true \\\n  --ht-reference ${s.ref} \\\n  --ht-num-threads ${s.threads} \\\n  --output-directory ${s.dragmapRefDir}\n\n# hg38: build from an alt-masked reference (recommended for DRAGEN-GATK)\n# by adding --ht-mask-bed hg38_alt_mask.bed (shipped in the DRAGMAP repo, fasta_mask/)`,
+      mem: '~64 GB (human genome)', time: '~1 h (human genome)',
+      outputs: '${dragmapRefDir}/ hash_table.cfg, hash_table.cmp, reference.bin, ref_index.bin, …',
+      note: 'The hash-table directory also stores the reference itself — align with -r pointing at this directory, not the FASTA. For hg38/hg19, mask ALT contigs with the BED files in the DRAGMAP repo (fasta_mask/).',
+    },
+  },
   'bwa-mem': {
     label: 'BWA-MEM', tags: ['popular'],
     dna: true, rna: false, quantOnly: false,
@@ -780,6 +845,33 @@ const ALIGNERS = {
       mem: '~5 GB', time: '~2 h (human genome)',
       outputs: '${ref}.amb, .ann, .bwt, .pac, .sa',
       note: 'For genomes larger than 2 Gb, add -a bwtsw to use the BWT-SW algorithm instead of IS.',
+    },
+  },
+  'strobealign': {
+    label: 'Strobealign', tags: ['fast','new'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['illumina'],
+    desc: 'Very fast strobemer-seeded short-read aligner — indexes the reference on the fly in about a minute',
+    pros: [
+      'Several times faster than BWA-MEM2 at comparable accuracy, especially for 100–500 bp reads',
+      'No separate index step: a human-genome index is built in memory in under a minute',
+      'Low memory and simple CLI — reference FASTA plus FASTQs, SAM to stdout',
+      'Optional on-disk .sti index (--create-index / --use-index) for many small libraries',
+      'PAF mapping-only (-x) and contig abundance (--aemb) modes for metagenomic binning',
+    ],
+    cons: [
+      'Newer tool — less validated than BWA-MEM/BWA-MEM2 in clinical variant-calling pipelines',
+      'Index parameters depend on read length; a prebuilt .sti is tied to one read-length profile and version',
+      'Accuracy advantage shrinks for very short reads (<75 bp)',
+      'Does not report split (supplementary) alignments for chimeric reads — weaker for SV breakpoint evidence',
+    ],
+    best: 'High-throughput Illumina / Element / DNBSEQ resequencing, metagenomics, and any run where alignment time dominates',
+    notes: [],
+    idx: {
+      cmd: s => `# Indexing is OPTIONAL — strobealign builds its index on the fly each run (<1 min for human)\n# A pre-built index pays off when mapping many small libraries\n\n# -r = mean read length; picks the indexing profile (canonical: 50, 75, 100, 125, 150, 250, 400)\nstrobealign --create-index -t ${s.threads} -r 150 ${s.ref}\n\n# Then add --use-index to the align command (same strobealign version and -r profile)`,
+      mem: '~30 GB (human genome, also needed when indexing on the fly)', time: '<1 min on 4+ cores (human genome)',
+      outputs: '${ref}.r150.sti (about 4× the reference size; name encodes the read-length profile)',
+      note: 'Optional. The .sti file encodes the read-length profile and strobealign version — regenerate it after upgrading or when switching to reads of a different length.',
     },
   },
   'bowtie2': {
@@ -864,8 +956,8 @@ const ALIGNERS = {
   'star': {
     label: 'STAR', tags: ['popular','fast'],
     dna: false, rna: true, quantOnly: false,
-    techs: ['illumina'],
-    desc: 'Ultra-fast splice-aware aligner — the standard for short-read RNA-seq',
+    techs: ['illumina','smallrna'],
+    desc: 'Ultra-fast splice-aware aligner — the standard for short-read RNA-seq (ENCODE small RNA mode for miRNA-seq)',
     pros: [
       'Fastest splice-aware short-read aligner available',
       'De novo splice junction discovery; 2-pass mode improves sensitivity',
@@ -882,6 +974,10 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
+        if (s.tech === 'smallrna') {
+          // ENCODE miRNA-seq pipeline: miRNA annotation GTF, --sjdbOverhang 1 (no splicing)
+          return `# ENCODE small RNA index — annotate with a miRNA GTF (e.g. GENCODE miRNA subset)\nSTAR --runMode genomeGenerate \\\n  --genomeDir ${s.genomeDir} \\\n  --genomeFastaFiles ${s.ref} \\\n  --sjdbGTFfile mirna_annotation.gtf \\\n  --sjdbOverhang 1 \\\n  --runThreadN ${s.threads}`;
+        }
         let c = `STAR --runMode genomeGenerate \\\n  --genomeDir ${s.genomeDir} \\\n  --genomeFastaFiles ${s.ref} \\\n  --sjdbGTFfile annotation.gtf \\\n  --runThreadN ${s.threads}`;
         const gb = parseFloat(s.genomeSizeGb);
         if (gb > 0) {
@@ -1001,6 +1097,32 @@ const ALIGNERS = {
       note: 'Optional. Use splice:hq preset index for PacBio Iso-Seq; splice for ONT.',
     },
   },
+  'bowtie': {
+    label: 'Bowtie (v1)', tags: ['popular'],
+    dna: false, rna: true, quantOnly: false,
+    techs: ['smallrna'],
+    desc: 'Ungapped short-read aligner — the classic choice for 18–30 nt miRNA / small RNA reads',
+    pros: [
+      'Ungapped, mismatch-bounded (-v) alignment suits very short reads better than gapped aligners',
+      'Exact stratum control: -v 1 -m 10 --best --strata reports best-stratum hits and drops highly multimapping reads',
+      'Used by miRDeep2, sRNAbench, ShortStack and many miRNA-seq pipelines',
+      'Small index and low memory (~3 GB for human)',
+    ],
+    cons: [
+      'No gapped alignment — indels in reads are not aligned',
+      'Ignores base qualities in -v mode; trim adapters and low-quality ends first',
+      'Not splice-aware; maintenance-only development (last release 1.3.1, 2021)',
+      'Only writes the @RG header line — read tags are added with samtools addreplacerg',
+    ],
+    best: 'miRNA-seq, piRNA / tRNA-fragment profiling, and other small RNA libraries after adapter trimming',
+    notes: [],
+    idx: {
+      cmd: s => `bowtie-build --threads ${s.threads} ${s.ref} ${s.refIdx}\n\n# Tip: for miRNA-only counting, align to a smaller reference such as\n# miRBase hairpin sequences (U→T) instead of the whole genome`,
+      mem: '~3 GB', time: '~1–2 h (human genome)',
+      outputs: '${index}.{1..4}.ebwt, ${index}.rev.{1,2}.ebwt',
+      note: 'Bowtie (v1) .ebwt indexes are not compatible with Bowtie2 .bt2 indexes — build a separate index.',
+    },
+  },
   'vg-giraffe': {
     label: 'vg giraffe', tags: ['graph'],
     dna: true, rna: false, quantOnly: false, graphOutput: false,
@@ -1057,6 +1179,31 @@ const ALIGNERS = {
       note: 'GraphAligner takes a GFA graph as input. Build one from reference + VCF using vg construct, or use a pangenome GFA from HPRC or Minigraph-Cactus. GFA files for human pangenomes can exceed 50 GB.',
     },
   },
+  'winnowmap': {
+    label: 'Winnowmap2', tags: ['new'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['pacbio','ont'],
+    desc: 'Repeat-aware minimap2 derivative — more accurate long-read mapping in centromeres and segmental duplications',
+    pros: [
+      'Weighted minimizers down-weight frequent k-mers instead of masking them — better placement in repeats',
+      'Minimal confidently alignable substrings reduce allelic bias inside paralogous repeats',
+      'Recommended mapper for T2T-CHM13 and other complete (gapless) assemblies',
+      'Same CLI and SAM output as minimap2 (-ax presets, -R, --MD, --cs, -Y)',
+    ],
+    cons: [
+      'Needs an extra meryl k-mer counting step per reference (fast: a few minutes for human)',
+      'Slower than minimap2 overall; gains are concentrated in repetitive regions',
+      'Smaller user base than minimap2; focused on DNA long-read and assembly mapping',
+    ],
+    best: 'PacBio HiFi / ONT mapping to T2T references, centromere and segmental-duplication analysis, SV calling in repeats',
+    notes: [],
+    idx: {
+      cmd: s => `# Count k-mers in the reference, then keep the top 0.02% most frequent\nmeryl count k=15 output merylDB ${s.ref}\nmeryl print greater-than distinct=0.9998 merylDB > repetitive_k15.txt`,
+      mem: '~8–16 GB (meryl, human genome)', time: '~2–5 min (human genome)',
+      outputs: 'merylDB/ (k-mer database), repetitive_k15.txt (high-frequency k-mer list passed with -W)',
+      note: 'Re-run meryl for each new reference. k=15 is used for read mapping; Winnowmap uses k=19 for assembly-to-assembly (asm20) alignment.',
+    },
+  },
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1064,12 +1211,13 @@ const ALIGNERS = {
 ═══════════════════════════════════════════════════ */
 const TECH_OPTIONS = {
   dna: [
-    { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
+    { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads) — also Element AVITI and MGI/DNBSEQ short reads' },
     { val: 'pacbio',    label: 'PacBio Long Reads',       desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
     { val: 'ont',       label: 'Oxford Nanopore',         desc: 'ONT reads, ultra-long reads (up to megabases)' },
   ],
   rna: [
-    { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
+    { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads — also Element AVITI and MGI/DNBSEQ' },
+    { val: 'smallrna', label: 'Small RNA / miRNA-seq',     desc: '18–30 nt miRNA, piRNA and tRNA-fragment reads; single-end, adapter trimming essential' },
     { val: 'longrna',  label: 'Long-Read RNA-seq',         desc: 'PacBio Iso-Seq or ONT direct RNA / cDNA sequencing' },
     { val: 'quantonly',label: 'Quantification Only',       desc: 'Skip genome alignment — directly estimate transcript abundance' },
   ],
@@ -1107,6 +1255,14 @@ const VERBOSE_OPTS = {
       why: 'Where DRAGEN writes temporary files. Point this at the fast local NVMe staging volume on a DRAGEN server — using network storage slows the run considerably.',
       cmd: v => `--intermediate-results-dir ${v}` },
   ],
+  'dragmap': [
+    { key: 'order', type: 'check', flag: '--preserve-map-align-order true', label: 'Deterministic output order',
+      why: 'Keeps SAM records in input order so repeated runs give byte-identical output. Costs some throughput; only needed for reproducibility checks, since samtools sort re-orders everything anyway.',
+      cmd: () => '--preserve-map-align-order true' },
+    { key: 'mmap', type: 'check', flag: '--mmap-reference true', label: 'Memory-map the hash table',
+      why: 'Memory-maps the reference/hash table instead of loading it all up front. Faster start-up when aligning only a handful of reads (tests, small panels); for full WGS runs preloading is faster.',
+      cmd: () => '--mmap-reference true' },
+  ],
   'bwa-mem': [
     { key: 'M', type: 'check', flag: '-M', label: 'Mark split reads as secondary',
       why: 'Picard MarkDuplicates compatibility. Flags chimeric alignments as secondary (0x100) instead of supplementary (0x800) — necessary when using Picard-based duplicate marking.',
@@ -1117,6 +1273,20 @@ const VERBOSE_OPTS = {
     { key: 'T', type: 'val', flag: '-T', label: 'Minimum alignment score', defaultVal: '30',
       why: 'Alignment score cutoff. Reduce to recover reads in highly divergent regions; increase for higher-specificity output in clean, well-characterised genomes.',
       cmd: v => `-T ${v}` },
+  ],
+  'strobealign': [
+    { key: 'useIdx', type: 'check', flag: '--use-index', label: 'Use pre-built .sti index',
+      why: 'Loads the index written by strobealign --create-index (Index tab) instead of building it on the fly. The .sti must come from the same strobealign version and read-length profile (-r) as your reads.',
+      cmd: () => '--use-index' },
+    { key: 'eqx', type: 'check', flag: '--eqx', label: 'Emit =/X CIGAR operations',
+      why: 'Writes = (match) and X (mismatch) instead of M in CIGAR strings. Some variant callers and visualisers use this to see mismatches without re-reading the reference.',
+      cmd: () => '--eqx' },
+    { key: 'U', type: 'check', flag: '-U', label: 'Suppress unmapped reads',
+      why: 'Omits unmapped single-end reads and pairs where both mates are unmapped. Smaller output; avoid if you track mapping rate from the BAM (samtools flagstat).',
+      cmd: () => '-U' },
+    { key: 'N', type: 'val', flag: '-N', label: 'Secondary alignments per read', defaultVal: '5',
+      why: 'By default only the primary alignment is reported. Report up to N secondary alignments for multi-mapping analyses; most variant-calling pipelines expect the default.',
+      cmd: v => `-N ${v}` },
   ],
   'bowtie2': [
     { key: 'local', type: 'check', flag: '--local', label: 'Local alignment mode',
@@ -1258,6 +1428,20 @@ const VERBOSE_OPTS = {
       why: 'Discards alignments whose score is below this fraction of the best overlapping alignment (default 0.9). Raise toward 1.0 to keep only the best-scoring alignments; lower it to retain more secondary alignments in repetitive or duplicated graph regions.',
       cmd: v => `--multimap-score-fraction ${v}` },
   ],
+  'winnowmap': [
+    { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
+      why: 'Outputs only primary and supplementary alignments. Reduces file size; most variant and SV callers ignore secondary alignments anyway.',
+      cmd: () => '--secondary=no' },
+    { key: 'MD', type: 'check', flag: '--MD', label: 'Output MD tag',
+      why: 'Adds the MD mismatch/deletion string. Needed by some variant callers and tools that do not re-derive mismatches from the reference FASTA.',
+      cmd: () => '--MD' },
+    { key: 'cs', type: 'check', flag: '--cs', label: 'Output cs difference string tag',
+      why: 'Compact per-base difference encoding (as in minimap2) used by paftools.js and some long-read variant callers.',
+      cmd: () => '--cs' },
+    { key: 'Y', type: 'check', flag: '-Y', label: 'Soft-clip supplementary alignments',
+      why: 'Keeps the full read sequence on supplementary alignments at breakpoints — useful for SV callers such as Sniffles2 and pbsv.',
+      cmd: () => '-Y' },
+  ],
   'minimap2-rna': [
     { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
       why: 'Limits output to primary and supplementary alignments. For full-length isoform analysis, secondary alignments are typically noise and their inclusion can confuse transcript assemblers (FLAIR, IsoQuant, TALON).',
@@ -1269,6 +1453,18 @@ const VERBOSE_OPTS = {
     { key: 'cs', type: 'check', flag: '--cs', label: 'Output cs difference string tag',
       why: 'Adds a compact per-base difference encoding used by IsoQuant, FLAIR, and other long-read transcript quantification tools. Recommended when planning to use these downstream tools.',
       cmd: () => '--cs' },
+  ],
+  'bowtie': [
+    { key: 'all', type: 'check', flag: '-a', label: 'Report all best-stratum alignments',
+      why: 'With --best --strata -m 10, report every alignment in the best stratum (up to 10) instead of one at random. Needed by tools that distribute multi-mapping small RNA reads themselves (e.g. ShortStack-style weighting).',
+      cmd: () => '-a' },
+    { key: 'noul', type: 'check', flag: '--no-unal', label: 'Suppress unaligned reads in output',
+      why: 'Omits SAM records for reads that failed to align, shrinking the BAM. Avoid if you report mapping rate from the BAM.',
+      cmd: () => '--no-unal' },
+    { key: 'un', type: 'text', flag: '--un', label: 'Write unaligned reads to file',
+      placeholder: 'unaligned.fastq',
+      why: 'Saves reads that did not align (or exceeded -m) to a FASTQ — handy for checking adapter dimers, contaminants, or novel small RNAs.',
+      cmd: v => `--un ${v}` },
   ],
 };
 
@@ -1304,6 +1500,7 @@ function pick(field, val, btn) {
   } else if (field === 'tech') {
     S.tech = val;
     S.aligner = null;
+    if (val === 'smallrna') S.paired = false;   // small RNA libraries are single-end
     renderAligners();
     unlock('card-aligner');
     lock('card-params'); lock('card-postproc');
@@ -1371,11 +1568,14 @@ function renderParams() {
     const idxName = al === 'salmon' ? 'Salmon Index Dir' : 'Kallisto Index (.idx)';
     refField = field(idxName, `<input type="text" value="${esc(idxVal)}" oninput="S.${idxKey}=this.value;refresh()">`) +
                field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
-  } else if (['bowtie2','hisat2'].includes(al)) {
+  } else if (['bowtie2','hisat2','bowtie'].includes(al)) {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
   } else if (al === 'dragen') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Hash Table Directory', `<input type="text" value="${esc(S.dragenRefDir)}" oninput="S.dragenRefDir=this.value;refresh()">`);
+  } else if (al === 'dragmap') {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Hash Table Directory', `<input type="text" value="${esc(S.dragmapRefDir)}" oninput="S.dragmapRefDir=this.value;refresh()">`);
   } else if (al === 'vg-giraffe') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
@@ -1389,7 +1589,7 @@ function renderParams() {
   }
 
   /* ---------- read fields ---------- */
-  const pairedSel = !isLong ? `<div class="field"><label>Read Layout</label>
+  const pairedSel = !isLong && S.tech !== 'smallrna' ? `<div class="field"><label>Read Layout</label>
     <select onchange="S.paired=(this.value==='paired');renderParams();renderPostProc();refresh()">
       <option value="paired"  ${S.paired ?'selected':''}>Paired-end (R1 + R2)</option>
       <option value="single"  ${!S.paired?'selected':''}>Single-end</option>
@@ -1407,7 +1607,7 @@ function renderParams() {
   let extraOpts = '';
   if (al === 'star') {
     extraOpts = `<div class="check-group" style="margin-top:1.1rem;">
-      ${check('starTwoPass', '2-pass mode', 'Runs STAR twice; improves sensitivity for novel splice junctions at the cost of ~2× runtime')}
+      ${S.tech === 'smallrna' ? '' : check('starTwoPass', '2-pass mode', 'Runs STAR twice; improves sensitivity for novel splice junctions at the cost of ~2× runtime')}
       ${check('starQuantMode', 'Gene count output (--quantMode GeneCounts)', 'Output per-gene read counts alongside the BAM; convenient for DE analysis')}
     </div>`;
   } else if (al === 'bowtie2') {
@@ -1462,7 +1662,7 @@ function renderParams() {
 // Aligners with no SAM/BAM @RG header to attach a read group to
 const RG_NONE = ['salmon','kallisto','graphaligner'];
 // DNA aligners whose output usually feeds GATK / DeepVariant (warn when RG is empty)
-const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe'];
+const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe','dragmap','strobealign','winnowmap'];
 const RG_PLATFORMS = ['ILLUMINA','PACBIO','ONT','ELEMENT','ULTIMA','DNBSEQ','IONTORRENT'];
 function rgAutoPlatform() {
   return { illumina: 'ILLUMINA', pacbio: 'PACBIO', ont: 'ONT' }[S.tech] || '';
@@ -1492,6 +1692,7 @@ function rgArgs(al) {
   switch (al) {
     case 'bwa-mem2': case 'bwa-mem':
     case 'minimap2-pb': case 'minimap2-ont': case 'minimap2-rna':
+    case 'winnowmap':
       // literal \t — the tools expand it to a tab themselves
       return [`-R '@RG\\tID:${rg.ID}\\tSM:${rg.SM}${extra.map(([k, v]) => `\\t${k}:${v}`).join('')}'`];
     case 'bowtie2': case 'hisat2':
@@ -1502,6 +1703,14 @@ function rgArgs(al) {
       return [`--sample ${rg.SM}`, `--read-group ${rg.ID}`];
     case 'dragen':
       return [`--RGID ${rg.ID}`, `--RGSM ${rg.SM}`, ...extra.map(([k, v]) => `--RG${k} ${v}`)];
+    case 'dragmap':
+      // dragen-os only has --RGID/--RGSM (no PL/LB options)
+      return [`--RGID ${rg.ID}`, `--RGSM ${rg.SM}`];
+    case 'strobealign':
+      return [`--rg-id=${rg.ID}`, `--rg=SM:${rg.SM}`, ...extra.map(([k, v]) => `--rg=${k}:${v}`)];
+    case 'bowtie':
+      // header @RG line only; per-read RG:Z tags are added by samtools addreplacerg in the align command
+      return [`--sam-RG ID:${rg.ID}`, `--sam-RG SM:${rg.SM}`, ...extra.map(([k, v]) => `--sam-RG ${k}:${v}`)];
     default:
       return [];
   }
@@ -1515,8 +1724,8 @@ function renderReadGroup() {
   const auto = rgAutoPlatform();
   const plOpts = [`<option value="" ${!S.rgPlatform?'selected':''}>Auto${auto ? ` (${auto})` : ' (omit)'}</option>`]
     .concat(RG_PLATFORMS.map(p => `<option value="${p}" ${S.rgPlatform===p?'selected':''}>${p}</option>`)).join('');
-  const giraffeNote = S.aligner === 'vg-giraffe'
-    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">vg giraffe only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>` : '';
+  const giraffeNote = ['vg-giraffe','dragmap'].includes(S.aligner)
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">${S.aligner === 'dragmap' ? 'DRAGMAP (dragen-os)' : 'vg giraffe'} only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>` : '';
   return `<div class="verbose-section-head" style="margin-top:1.1rem;">Sample / read group</div>
     <div class="param-grid">
       ${field('Sample name (SM)', `<input type="text" value="${esc(S.rgSample)}" placeholder="${S.aligner==='dragen'?'sample1 (default)':'leave empty for no @RG'}" oninput="S.rgSample=this.value;refresh()">`)}
@@ -1689,7 +1898,7 @@ function renderPostProc() {
           <option value="cram" ${cram ?'selected':''}>CRAM (.cram + .crai) — ~40–60% smaller, needs reference</option>
         </select>
       </div>
-      ${cram && ['bowtie2','hisat2'].includes(S.aligner)
+      ${cram && ['bowtie2','hisat2','bowtie'].includes(S.aligner)
         ? field('Reference FASTA <span style="font-weight:400;color:var(--muted)">(for CRAM encoding)</span>', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`)
         : ''}
     </div>`;
@@ -1760,6 +1969,12 @@ function buildQCCmd() {
     return `# PacBio QC — FastQC for a quick report\nfastqc -t ${T} ${S.reads} -o ${OUT}_fastqc/`;
   }
 
+  if (S.tech === 'smallrna') {
+    // Small RNA: inserts (~22 nt) are shorter than the read, so every read runs into the 3' adapter
+    const AD = 'TGGAATTCTCGGGTGCCAAGG';   // Illumina TruSeq Small RNA 3' adapter
+    return `# Small RNA — adapter trimming is ESSENTIAL (inserts are shorter than the read)\n# TGGAATTCTCGGGTGCCAAGG = Illumina TruSeq Small RNA 3' adapter;\n# change it for your kit (NEBNext: AGATCGGAAGAGCACACGTCT, QIAseq: AACTGTAGGCACCATCAAT)\nfastp \\\n  -i ${S.r1} \\\n  -o ${OUT}_trimmed.fastq.gz \\\n  --adapter_sequence ${AD} \\\n  --length_required 18 \\\n  --length_limit 40 \\\n  --thread ${T} \\\n  --html ${OUT}_fastp.html \\\n  --json ${OUT}_fastp.json\n\n# Alternative: cutadapt, discarding reads with no adapter (likely not small RNA)\n# cutadapt -a ${AD} --discard-untrimmed -m 18 -M 30 \\\n#   -j ${T} -o ${OUT}_trimmed.fastq.gz ${S.r1}\n\n# Align the trimmed reads (${OUT}_trimmed.fastq.gz), not the raw FASTQ`;
+  }
+
   // Illumina short reads — fastp (recommended: trim + QC in one pass)
   const reads = S.paired
     ? `-i ${S.r1} -I ${S.r2} \\\n  -o ${OUT}_R1_trimmed.fastq.gz \\\n  -O ${OUT}_R2_trimmed.fastq.gz`
@@ -1824,12 +2039,22 @@ function buildAlignCmd() {
       break;
     }
 
+    case 'dragmap': {
+      const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-1 ${R1}`;
+      lines.push(pipe(`dragen-os \\\n  -r ${S.dragmapRefDir} \\\n  ${inArg} \\\n  --num-threads ${T}${rgfml('dragmap')}${vfml('dragmap')}`));
+      break;
+    }
+
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
       lines.push(pipe(`bwa mem${xFlag} -t ${T}${rgf('bwa-mem')}${vf('bwa-mem')} ${REF} ${inReads}`));
       break;
     }
+
+    case 'strobealign':
+      lines.push(pipe(`strobealign -t ${T}${rgf('strobealign')}${vf('strobealign')} ${REF} ${reads}`));
+      break;
 
     case 'bowtie2': {
       const preset = S.bt2Preset || '--sensitive';
@@ -1856,7 +2081,22 @@ function buildAlignCmd() {
       if (gz)              star += ` \\\n  --readFilesCommand zcat`;
       star += ` \\\n  --outSAMtype BAM ${sorted}`;
       star += ` \\\n  --outFileNamePrefix ${OUT}/`;
-      if (S.starTwoPass)   star += ` \\\n  --twopassMode Basic`;
+      if (S.tech === 'smallrna') {
+        // ENCODE miRNA-seq settings: ungapped-ish end-to-end, no splicing, short-read friendly filters.
+        // Skip any default the user overrides in advanced options (STAR rejects duplicate parameters).
+        const sv = S.verboseMode ? vOptsFor('star') : {};
+        const set = k => sv[k] !== undefined && sv[k] !== null && sv[k] !== '';
+        if (!set('misNmax')) star += ` \\\n  --outFilterMismatchNmax 1`;
+        star += ` \\\n  --outFilterMultimapScoreRange 0`;
+        if (!set('mmNmax'))  star += ` \\\n  --outFilterMultimapNmax 10`;
+        star += ` \\\n  --alignEndsType EndToEnd`;
+        star += ` \\\n  --alignIntronMax 1`;
+        star += ` \\\n  --alignSJDBoverhangMin 1000`;
+        star += ` \\\n  --outFilterScoreMinOverLread 0`;
+        star += ` \\\n  --outFilterMatchNminOverLread 0`;
+        star += ` \\\n  --outFilterMatchNmin 16`;
+        star += ` \\\n  --outSAMunmapped Within`;
+      } else if (S.starTwoPass) star += ` \\\n  --twopassMode Basic`;
       if (S.starQuantMode) star += ` \\\n  --quantMode GeneCounts`;
       star += rgfml('star');
       star += vfml('star');
@@ -1890,6 +2130,16 @@ function buildAlignCmd() {
       lines.push(pipe(`minimap2 -ax splice:hq${rgf('minimap2-rna')}${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
       break;
 
+    case 'bowtie': {
+      // -v 1: ≤1 mismatch, ungapped; -m 10 --best --strata: drop reads with >10 best-stratum hits
+      const inArg = S.paired ? `-1 ${R1} -2 ${R2}` : R1;
+      const rg    = rgFields('bowtie');
+      // bowtie (v1) writes only the @RG header line; tag every read with that ID
+      const addRG = rg ? ` \\\n  | samtools addreplacerg -R ${rg.ID} -` : '';
+      lines.push(pipe(`bowtie -p ${T} -v 1 -m 10 --best --strata -S${vf('bowtie')}${rgfml('bowtie')} \\\n  -x ${S.refIdx} \\\n  ${inArg}${addRG}`));
+      break;
+    }
+
     case 'vg-giraffe': {
       const inFlags = S.paired ? `-f ${R1} \\\n  -f ${R2}` : `-f ${R1}`;
       lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.shortread.withzip.min \\\n  -z ${S.vgIdxPrefix}.shortread.zipcodes \\\n  ${inFlags} \\\n  --output-format SAM${rgfml('vg-giraffe')}${vfml('vg-giraffe')} \\\n  -t ${T}`));
@@ -1904,6 +2154,13 @@ function buildAlignCmd() {
       lines.push(`# vg gbwt -g ${S.graphFile.replace(/\.gfa$/, '.gbz')} -G ${S.graphFile}`);
       lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -G -b -t ${T} ${OUT}.gaf \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
       break;
+
+    case 'winnowmap': {
+      const preset = S.tech === 'ont' ? 'map-ont' : 'map-pb';
+      if (S.tech === 'pacbio') lines.push('# -ax map-pb is the HiFi preset; use -ax map-pb-clr for PacBio CLR reads');
+      lines.push(pipe(`winnowmap -W repetitive_k15.txt -ax ${preset}${rgf('winnowmap')}${vf('winnowmap')} -t ${T} ${REF} ${LONG}`));
+      break;
+    }
 
     default:
       return null;
@@ -1977,7 +2234,8 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
+// Longer names must precede their prefixes (bowtie2-build > bowtie2 > bowtie-build > bowtie, dragen-os > dragen)
+const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen-os','dragen','winnowmap','meryl','strobealign','bowtie-build','bowtie','cutadapt'];
 
 function highlight(raw) {
   const e = raw
@@ -2019,12 +2277,12 @@ function buildNotes() {
   }
 
   // Paired-end recommended
-  if (!S.paired && ['bwa-mem2','bwa-mem','dragen','star','hisat2'].includes(al)) {
+  if (!S.paired && S.tech !== 'smallrna' && ['bwa-mem2','bwa-mem','dragen','dragmap','strobealign','star','hisat2'].includes(al)) {
     notes.push({ type: 'info', text: '<strong>Paired-end recommended:</strong> Most RNA-seq and WGS workflows use paired-end reads for better alignment accuracy and insert-size estimation.' });
   }
 
   // STAR 2-pass note
-  if (al === 'star' && !S.starTwoPass) {
+  if (al === 'star' && !S.starTwoPass && S.tech !== 'smallrna') {
     notes.push({ type: 'info', text: '<strong>2-pass mode:</strong> Enable 2-pass mode for improved detection of novel splice junctions, especially for de novo transcriptomics or samples without a well-annotated GTF.' });
   }
 
@@ -2052,7 +2310,23 @@ function buildNotes() {
 
   // DRAGEN licensing
   if (al === 'dragen') {
-    notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
+    notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> — also offered as an aligner option above — reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
+  }
+
+  // Small RNA / miRNA-seq
+  if (S.tech === 'smallrna') {
+    notes.push({ type: 'warn', text: '<strong>Trim adapters first:</strong> small RNA inserts (~22 nt) are shorter than the read, so every read contains 3\' adapter. Run the QC tab (fastp/cutadapt with your kit\'s adapter, min length 18) and align the trimmed FASTQ.' });
+    if (al === 'star') {
+      notes.push({ type: 'info', text: '<strong>ENCODE small RNA settings:</strong> <code>--alignIntronMax 1</code> and <code>--alignSJDBoverhangMin 1000</code> disable splicing, <code>--alignEndsType EndToEnd</code> forbids soft-clipping, and <code>--outFilterMatchNmin 16</code> with the per-length filters set to 0 keeps 16–30 nt reads. Build the index with a miRNA GTF and <code>--sjdbOverhang 1</code> (Index tab).' });
+    }
+    if (S.markDups) {
+      notes.push({ type: 'warn', text: '<strong>Don\'t mark duplicates for small RNA:</strong> abundant miRNAs produce millions of identical reads by design; duplicate marking would discard real signal. Use UMIs (e.g. QIAseq) with <code>umi_tools dedup</code> if PCR duplicates matter.' });
+    }
+  }
+
+  // Winnowmap needs the meryl k-mer list from the Index tab
+  if (al === 'winnowmap') {
+    notes.push({ type: 'info', text: '<strong>Repetitive k-mer list required:</strong> <code>-W repetitive_k15.txt</code> comes from the meryl step on the Index tab and must be computed from the same reference FASTA.' });
   }
 
   const bamPost = !info.quantOnly && !info.graphOutput && !info.builtinPost;
@@ -2350,6 +2624,18 @@ ${bamOut('BWA')}${post('BAM')}
     ${inA} --> BWA`;
     }
 
+    case 'strobealign':
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    STI(["${REF}.r150.sti<br/>optional pre-index"]):::idx
+    SBA["strobealign -t ${T}<br/>on-the-fly index"]:::tool
+${bamOut('SBA')}${post('BAM')}
+    REF -.->|create-index| STI
+    REF --> SBA
+    STI -.->|use-index| SBA
+    ${srArr} --> SBA`;
+
     case 'bowtie2':
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
@@ -2389,11 +2675,11 @@ ${bamOut('MM2')}${post('BAM')}
       const coord = S.sortBam ? 'sortedByCoord.' : '';
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
-    GTF(["annotation.gtf"]):::file
+    GTF(["${S.tech === 'smallrna' ? 'mirna_annotation.gtf' : 'annotation.gtf'}"]):::file
 ${srIn}
-    SGEN["STAR genomeGenerate<br/>--runThreadN ${T}"]:::tool
+    SGEN["STAR genomeGenerate<br/>--runThreadN ${T}${S.tech === 'smallrna' ? '<br/>--sjdbOverhang 1' : ''}"]:::tool
     GDIR2(["${GDIR}/"]):::idx
-    SALN["STAR align<br/>--runThreadN ${T}${S.starTwoPass ? '<br/>--twopassMode Basic' : ''}"]:::tool
+    SALN["STAR align<br/>--runThreadN ${T}${S.tech === 'smallrna' ? '<br/>ENCODE small RNA mode' : S.starTwoPass ? '<br/>--twopassMode Basic' : ''}"]:::tool
     BAMO(["${OUT}/<br/>Aligned.${coord}out.bam${S.starQuantMode ? '<br/>ReadsPerGene.out.tab' : ''}"]):::out
 ${post('BAMO')}
     REF --> SGEN
@@ -2456,6 +2742,20 @@ ${bamOut('MM2')}${post('BAM')}
     MMI -.->|use in place of FASTA| MM2
     LR --> MM2`;
 
+    case 'bowtie': {
+      const rg = rgFields('bowtie');
+      const via = rg ? `    ARG["samtools addreplacerg"]:::tool\n    BT1 --> ARG\n` : '';
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    BIDX["bowtie-build --threads ${T}"]:::tool
+    IDXF(["${RIDX}.*.ebwt"]):::idx
+    BT1["bowtie -v 1 -m 10<br/>--best --strata -p ${T}"]:::tool
+${via}${bamOut(rg ? 'ARG' : 'BT1')}${post('BAM')}
+    REF --> BIDX --> IDXF --> BT1
+    ${srArr} --> BT1`;
+    }
+
     case 'dragen': {
       const HT  = dl(S.dragenRefDir || 'dragen_hash_table');
       const ODIR = `${OUT}_dragen/${OUT}`;
@@ -2475,6 +2775,19 @@ ${srIn}
 ${tail}
     REF --> HTB --> HTD --> DRG
     ${srArr} --> DRG`;
+    }
+
+    case 'dragmap': {
+      const HT = dl(S.dragmapRefDir || 'dragmap_hash_table');
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    HTB["dragen-os --build-hash-table"]:::tool
+    HTD(["${HT}/"]):::idx
+    DOS["dragen-os --num-threads ${T}"]:::tool
+${bamOut('DOS')}${post('BAM')}
+    REF --> HTB --> HTD --> DOS
+    ${srArr} --> DOS`;
     }
 
     case 'vg-giraffe': {
@@ -2510,6 +2823,21 @@ ${bamOut('VGG')}${post('BAM')}
     VCON --> GFA2 --> GA
     LR --> GA
     GA --> GAF`;
+    }
+
+    case 'winnowmap': {
+      const preset = S.tech === 'ont' ? 'map-ont' : 'map-pb';
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    LR(["${LONG}"]):::file
+    MER["meryl count k=15<br/>meryl print greater-than"]:::tool
+    KMR(["repetitive_k15.txt"]):::idx
+    WM["winnowmap -ax ${preset} -t ${T}"]:::tool
+${bamOut('WM')}${post('BAM')}
+    REF --> MER --> KMR
+    KMR -->|k-mer weights| WM
+    REF --> WM
+    LR --> WM`;
     }
 
     default: return null;
@@ -2557,6 +2885,7 @@ function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 /* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
 function migrateState() {
   migrateReadGroup();   // before the aligner may be cleared below
+  if (S.tech === 'smallrna') S.paired = false;
   if (S.tech === 'pangenome') {
     if (S.aligner === 'vg-giraffe')        S.tech = 'illumina';
     else if (S.aligner === 'graphaligner') S.tech = 'pacbio';
