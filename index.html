@@ -124,6 +124,7 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .tag-memory   { background: #fef3c7; color: #92400e; }
 .tag-new      { background: #dbeafe; color: #1d4ed8; }
 .tag-paid     { background: #fee2e2; color: #991b1b; }
+.tag-graph    { background: #fce7f3; color: #9d174d; }
 
 /* ── Param grid ── */
 .param-grid {
@@ -984,9 +985,9 @@ const ALIGNERS = {
     },
   },
   'vg-giraffe': {
-    label: 'vg giraffe', tags: ['new'],
+    label: 'vg giraffe', tags: ['graph'],
     dna: true, rna: false, quantOnly: false, graphOutput: false,
-    techs: ['pangenome'],
+    techs: ['illumina'],
     desc: 'Haplotype-aware short-read alignment to a pangenome variation graph',
     pros: [
       'Reduces reference bias — critical for diverse or admixed cohorts',
@@ -1012,9 +1013,9 @@ const ALIGNERS = {
     },
   },
   'graphaligner': {
-    label: 'GraphAligner', tags: ['new'],
+    label: 'GraphAligner', tags: ['graph'],
     dna: true, rna: false, quantOnly: false, graphOutput: true,
-    techs: ['pangenome'],
+    techs: ['pacbio','ont'],
     desc: 'Long-read aligner to pangenome graphs — PacBio HiFi and ONT',
     pros: [
       'Best accuracy for long-read alignment to variation graphs',
@@ -1049,7 +1050,6 @@ const TECH_OPTIONS = {
     { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
     { val: 'pacbio',    label: 'PacBio Long Reads',       desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
     { val: 'ont',       label: 'Oxford Nanopore',         desc: 'ONT reads, ultra-long reads (up to megabases)' },
-    { val: 'pangenome', label: 'Pangenome / Graph Genome', desc: 'Align to a variation graph (VCF + reference) for reduced reference bias' },
   ],
   rna: [
     { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
@@ -1289,6 +1289,7 @@ const TAG_HTML = {
   memory:  '<span class="tag tag-memory">Low memory</span>',
   new:     '<span class="tag tag-new">New</span>',
   paid:    '<span class="tag tag-paid">Commercial</span>',
+  graph:   '<span class="tag tag-graph">Pangenome</span>',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1358,7 +1359,7 @@ function renderParams() {
   const info = ALIGNERS[al];
   if (!info) { el.innerHTML = ''; return; }
 
-  const isLong  = ['pacbio','ont','longrna'].includes(S.tech) || al === 'graphaligner';
+  const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
   const isQuant = info.quantOnly;
 
   /* ---------- reference/index field ---------- */
@@ -1848,7 +1849,7 @@ function buildNotes() {
   // Sort required for markdup
   if (S.markDups && !S.sortBam && al === 'dragen') {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> DRAGEN duplicate marking requires <code>--enable-sort true</code>; it has been turned off in the command. Enable sorting above.' });
-  } else if (S.markDups && !S.sortBam && !info.quantOnly) {
+  } else if (S.markDups && !S.sortBam && !info.quantOnly && !info.graphOutput) {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> <code>samtools markdup</code> requires coordinate-sorted input. Enable "Sort BAM by coordinate" above.' });
   }
 
@@ -2331,6 +2332,20 @@ function toggleCitations() {
 /* ── tiny XSS-safe escape for attribute values ── */
 function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 
+/* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
+function migrateState() {
+  if (S.tech === 'pangenome') {
+    if (S.aligner === 'vg-giraffe')        S.tech = 'illumina';
+    else if (S.aligner === 'graphaligner') S.tech = 'pacbio';
+    else { S.tech = null; S.aligner = null; }
+  }
+  // Drop any tech/aligner combination that is no longer offered
+  const techs = TECH_OPTIONS[S.expType] || [];
+  if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
+  const a = ALIGNERS[S.aligner];
+  if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
+}
+
 /* ── Restore UI after state is loaded from hash/localStorage ── */
 function restoreUI() {
   if (S.expType) {
@@ -2388,6 +2403,7 @@ mermaid.initialize({
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
+  if (restored) migrateState();
   if (restored) restoreUI();
   else refresh();
 })();
