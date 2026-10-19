@@ -69,7 +69,7 @@ R1 is the barcode + UMI read and R2 the cDNA read. Output is a cell × gene coun
 
 ## Development
 
-Everything is in `index.html`: HTML, CSS and JavaScript, with no build step and no dependencies apart from Mermaid from a CDN. Open the file in a browser to develop. See [CLAUDE.md](CLAUDE.md) for an overview of the architecture and for how to add an aligner or a technology. The site deploys through GitHub Pages from `main`.
+Everything is in `index.html`: HTML, CSS and JavaScript, with no build step and no dependencies apart from Mermaid from a CDN (pinned, with SRI). Run the tests with `node --test`. Open the file in a browser to develop. See [CLAUDE.md](CLAUDE.md) for an overview of the architecture and for how to add an aligner or a technology. The site deploys through GitHub Pages from `main`.
 
 ## Citations
 
