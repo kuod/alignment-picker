@@ -20,8 +20,8 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | Salmon | RNA-seq quantification |
 | Kallisto | RNA-seq quantification |
 | Minimap2 | Long-read RNA-seq |
-| vg giraffe | Pangenome / graph genome (short reads) |
-| GraphAligner | Pangenome / graph genome (long reads) |
+| vg giraffe | Pangenome / graph genome — DNA, Illumina short reads |
+| GraphAligner | Pangenome / graph genome — DNA, PacBio + ONT long reads |
 
 ## Citations
 
