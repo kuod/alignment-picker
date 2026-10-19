@@ -807,6 +807,29 @@ const S = {
   kbT2g:         't2g.txt',
 };
 
+/* ── POSIX shell quoting ──
+   Every user-supplied value that lands in a generated command goes through shq().
+   Plain safe tokens stay bare (readable output); anything else is single-quoted
+   with ' written as '\''. A leading ~/ is kept outside the quotes so tilde
+   expansion still works. Control characters (newline, CR, tab, ...) cannot sit
+   in a one-line quote or a # comment, so those values use bash's $'...' form
+   (the downloaded script is bash). */
+function shq(v) {
+  let s = String(v == null ? '' : v).replace(/\0/g, '');
+  if (s === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) && !/^-?~/.test(s)) return s;
+  let pre = '';
+  if (s.startsWith('~/') && s.length > 2) { pre = '~/'; s = s.slice(2); }
+  if (/[\x00-\x1f\x7f]/.test(s)) {
+    return pre + "$'" + s.replace(/[\\']|[\x00-\x1f\x7f]/g, c =>
+      c === '\\' ? '\\\\' : c === "'" ? "\\'" : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t'
+        : '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0')) + "'";
+  }
+  return pre + "'" + s.replace(/'/g, "'\\''") + "'";
+}
+// <ref without its last extension>.mmi, quoted; takes the unquoted path from an effectiveState() view
+function mmiOf(s) { return shq(String((s._raw && s._raw.ref) || s.ref).replace(/\.[^.]+$/, '') + '.mmi'); }
+
 const DEFAULTS = JSON.parse(JSON.stringify(S));
 
 /* ═══════════════════════════════════════════════════
@@ -1046,7 +1069,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\n# HiFi / CCS reads:\nminimap2 -ax map-hifi -d ${mmi} ${s.ref}\n\n# CLR reads:\n# minimap2 -ax map-pb -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1073,7 +1096,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\nminimap2 -ax map-ont -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1103,7 +1126,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — pbmm2 align also accepts the FASTA directly\n# The .mmi bakes in the preset's k-mer/window size, so use the SAME --preset to align\n\npbmm2 index ${s.ref} ${mmi} --preset ${pbPreset(s)}`;
       },
       mem: '~10–20 GB (human genome)', time: '~5–10 min (human genome)',
@@ -1327,7 +1350,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n\n# PacBio Iso-Seq:\nminimap2 -ax splice:hq -d ${mmi} ${s.ref}\n\n# ONT cDNA / direct RNA:\n# minimap2 -ax splice -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1477,7 +1500,7 @@ const SC_CHEM = {
   '5v3': { label: '10x 5′ v3 (GEM-X, R2 only)', cb: 16, umi: 12, wl: '3M-5pgex-jan-2023.txt', af: '10xv3-5p', kb: '10XV3', five: true },
 };
 function scChem() { return SC_CHEM[S.scChem] || SC_CHEM['v3']; }
-function scWL()   { return (S.scWhitelist || '').trim() || scChem().wl; }
+function scWL(s = S) { return (s.scWhitelist || '').trim() || scChem().wl; }
 
 /* ═══════════════════════════════════════════════════
    VERBOSE OPTIONS DATABASE
@@ -2246,10 +2269,11 @@ function getVerboseFlags(al) {
   if (!S.verboseMode) return [];
   return (VERBOSE_OPTS[al] || []).reduce((acc, opt) => {
     const v = vOptsFor(al)[opt.key];
+    // values are user input: quote them (a check has no value)
     if (opt.type === 'check'  && v === true)                          acc.push(opt.cmd(v));
-    if (opt.type === 'text'   && v && v.trim())                       acc.push(opt.cmd(v.trim()));
-    if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(v));
-    if (opt.type === 'select' && v)                                   acc.push(opt.cmd(v));
+    if (opt.type === 'text'   && typeof v === 'string' && v.trim())   acc.push(opt.cmd(shq(v.trim())));
+    if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(shq(v)));
+    if (opt.type === 'select' && v)                                   acc.push(opt.cmd(shq(v)));
     return acc;
   }, []);
 }
@@ -2476,7 +2500,17 @@ const PATH_KEYS = ['ref','refIdx','genomeDir','txomeFa','salmonIdx','kallistoIdx
   'vcfFile','vgIdxPrefix','graphFile','dragenRefDir','dragmapRefDir','bismarkGenome','afIdx','kbIdx','kbT2g'];
 function effectiveState() {
   const v = Object.assign({}, S);
-  for (const k of PATH_KEYS) if (typeof v[k] !== 'string' || !v[k].trim()) v[k] = DEFAULTS[k];
+  // v._raw keeps the unquoted values for code that edits a path (extension, basename);
+  // everything the builders interpolate is shell-quoted here, once.
+  v._raw = {};
+  for (const k of PATH_KEYS) {
+    if (typeof v[k] !== 'string' || !v[k].trim()) v[k] = DEFAULTS[k];
+    v._raw[k] = v[k].trim();
+    v[k] = shq(v._raw[k]);
+  }
+  v.mosdepthBed = typeof S.mosdepthBed === 'string' && S.mosdepthBed.trim() ? shq(S.mosdepthBed.trim()) : '';
+  v.bt2Preset = shq(typeof S.bt2Preset === 'string' && S.bt2Preset ? S.bt2Preset : DEFAULTS.bt2Preset);
+  v.libType = shq(typeof S.libType === 'string' && S.libType ? S.libType : DEFAULTS.libType);
   v.threads = /^\s*[1-9]\d*\s*$/.test(String(S.threads)) ? String(S.threads).trim() : DEFAULTS.threads;
   return v;
 }
@@ -2522,8 +2556,8 @@ function _buildQCCmd(S) {
       .filter(Boolean).map(f => ` \\\n  ${f}`).join('');
     const TD = `${OUT}_trimmed`;
     const trimmed = S.paired
-      ? `${TD}/${tgName(S.r1, '_val_1')} ${TD}/${tgName(S.r2, '_val_2')}`
-      : `${TD}/${tgName(S.r1, '_trimmed')}`;
+      ? `${TD}/${shq(tgName(S._raw.r1, '_val_1'))} ${TD}/${shq(tgName(S._raw.r2, '_val_2'))}`
+      : `${TD}/${shq(tgName(S._raw.r1, '_trimmed'))}`;
     let c = `# Trim Galore — adapter + quality trimming for bisulfite reads\n`;
     c += rrbs
       ? `# --rrbs also removes the MspI end-repair artefact (2 bp from the 3' end of R1/SE, 2 bp from the 5' end of R2)\n`
@@ -2695,7 +2729,7 @@ function _buildAlignCmd(S) {
 
     case 'pbmm2': {
       // pbmm2 reads uBAM (keeping all tags) or FASTQ natively
-      const mmi = (REF || '').replace(/\.[^.]+$/, '') + '.mmi';
+      const mmi = mmiOf(S);
       const opts = ` \\\n  --preset ${pbPreset()}${rgfml('pbmm2')}${vfml('pbmm2')} \\\n  -j ${T}`;
       if (CRAM) {
         // pbmm2 writes BAM only: stream unsorted BAM to stdout for samtools to encode
@@ -2768,7 +2802,7 @@ function _buildAlignCmd(S) {
       c += ` \\\n  --readFilesIn ${R2} ${R1}`;   // cDNA read first, barcode read last
       if (gz) c += ` \\\n  --readFilesCommand zcat`;
       c += ` \\\n  --soloType CB_UMI_Simple`;
-      c += ` \\\n  --soloCBwhitelist ${scWL()}`;
+      c += ` \\\n  --soloCBwhitelist ${shq(scWL(S))}`;
       c += ` \\\n  --soloCBstart 1 \\\n  --soloCBlen ${ch.cb} \\\n  --soloUMIstart ${ch.cb + 1} \\\n  --soloUMIlen ${ch.umi}`;
       c += ` \\\n  --soloBarcodeReadLength 0`;
       if (ch.five) c += ` \\\n  --soloStrand Reverse`;
@@ -2798,7 +2832,7 @@ function _buildAlignCmd(S) {
       c += ` \\\n  --index ${S.afIdx}/index`;
       c += ` \\\n  --chemistry ${ch.af}`;
       if (!vo.res) c += ` \\\n  --resolution cr-like`;
-      c += ` \\\n  --unfiltered-pl ${scWL()}`;
+      c += ` \\\n  --unfiltered-pl ${shq(scWL(S))}`;
       c += vfml('simpleaf');
       c += ` \\\n  --anndata-out \\\n  --threads ${T} \\\n  --output ${OUT}_simpleaf`;
       lines.push(c);
@@ -2814,7 +2848,7 @@ function _buildAlignCmd(S) {
       const ch = scChem();
       let c = `kb count${S.scNuclei ? ' --workflow nac' : ''} \\\n  -i ${S.kbIdx} \\\n  -g ${S.kbT2g}`;
       if (S.scNuclei) c += ` \\\n  -c1 cdna_t2c.txt \\\n  -c2 nascent_t2c.txt \\\n  --sum total`;
-      c += ` \\\n  -x ${ch.kb} \\\n  -w ${scWL()}`;
+      c += ` \\\n  -x ${ch.kb} \\\n  -w ${shq(scWL(S))}`;
       if (ch.five) c += ` \\\n  --strand reverse`;
       c += vfml('kb');
       c += ` \\\n  --h5ad \\\n  -t ${T} \\\n  -o ${OUT}_kb \\\n  ${R1} ${R2}`;

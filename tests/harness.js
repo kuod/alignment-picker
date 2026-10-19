@@ -47,7 +47,7 @@ function load({ hash = '', storage = {}, mermaid = true } = {}) {
   ctx.window = ctx;
   vm.createContext(ctx);
   // make top-level const/let (S, ALIGNERS, ...) reachable from the outside
-  const names = ['S','ALIGNERS','TECH_OPTIONS','buildQCCmd','buildIndexCmd','buildAlignCmd','buildNotes','buildDiagram','highlight','refresh','migrateState','migrateVOpts','esc','renderParams','encodeState','decodeState','downloadScript'];
+  const names = ['S','ALIGNERS','TECH_OPTIONS','buildQCCmd','buildIndexCmd','buildAlignCmd','buildNotes','buildDiagram','highlight','refresh','migrateState','migrateVOpts','esc','renderParams','encodeState','decodeState','downloadScript','shq'];
   const src = m[1] + '\n;globalThis.__api = {' + names.map(n => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(',') + '};';
   vm.runInContext(src, ctx);
   return { api: ctx.__api, ctx, store };
