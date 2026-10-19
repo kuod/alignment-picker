@@ -2469,7 +2469,22 @@ function tgName(file, suffix) {
   return f.replace(/\.gz$/, '').replace(/\.(fastq|fq)$/, '') + suffix + (gz ? '.fq.gz' : '.fq');
 }
 
-function buildQCCmd() {
+/* Builders run against a view of S where blank path fields fall back to their
+   defaults and threads is a positive integer, so the commands never contain
+   empty arguments or `-t 0`. (Each _build*Cmd shadows the global S with this view.) */
+const PATH_KEYS = ['ref','refIdx','genomeDir','txomeFa','salmonIdx','kallistoIdx','r1','r2','reads','output',
+  'vcfFile','vgIdxPrefix','graphFile','dragenRefDir','dragmapRefDir','bismarkGenome','afIdx','kbIdx','kbT2g'];
+function effectiveState() {
+  const v = Object.assign({}, S);
+  for (const k of PATH_KEYS) if (typeof v[k] !== 'string' || !v[k].trim()) v[k] = DEFAULTS[k];
+  v.threads = /^\s*[1-9]\d*\s*$/.test(String(S.threads)) ? String(S.threads).trim() : DEFAULTS.threads;
+  return v;
+}
+function buildQCCmd()    { return _buildQCCmd(effectiveState()); }
+function buildIndexCmd() { return _buildIndexCmd(effectiveState()); }
+function buildAlignCmd() { return _buildAlignCmd(effectiveState()); }
+
+function _buildQCCmd(S) {
   if (!S.tech) return null;
   const T   = S.threads || '8';
   const OUT = S.output  || 'output';
@@ -2529,7 +2544,7 @@ function buildQCCmd() {
 /* ═══════════════════════════════════════════════════
    BUILD INDEX COMMAND
 ═══════════════════════════════════════════════════ */
-function buildIndexCmd() {
+function _buildIndexCmd(S) {
   const al = S.aligner;
   if (!al || !ALIGNERS[al]?.idx) return null;
   return ALIGNERS[al].idx.cmd(S);
@@ -2538,7 +2553,7 @@ function buildIndexCmd() {
 /* ═══════════════════════════════════════════════════
    BUILD ALIGN COMMAND
 ═══════════════════════════════════════════════════ */
-function buildAlignCmd() {
+function _buildAlignCmd(S) {
   const al = S.aligner;
   if (!al) return null;
 
