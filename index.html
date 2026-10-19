@@ -1473,7 +1473,31 @@ function check(key, label, desc) {
 }
 
 /* ── Verbose helpers ── */
-function setVOpt(key, val) { S.vOpts[key] = val; }
+// Verbose option values are namespaced per aligner: S.vOpts[aligner][key]
+function vOptsFor(al) {
+  if (!S.vOpts || typeof S.vOpts !== 'object') S.vOpts = {};
+  if (!al) return {};
+  const o = S.vOpts[al];
+  return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+}
+function setVOpt(key, val) {
+  const al = S.aligner;
+  if (!al) return;
+  S.vOpts[al] = Object.assign(vOptsFor(al), { [key]: val });
+}
+function getVOpt(key) { return vOptsFor(S.aligner)[key]; }
+// Old state stored a flat {key: value} map; move it under the current aligner.
+function migrateVOpts() {
+  const v = S.vOpts;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { S.vOpts = {}; return; }
+  const isNs = x => x && typeof x === 'object' && !Array.isArray(x);
+  const vals = Object.values(v);
+  if (vals.length && !vals.every(isNs)) {
+    const flat = {};
+    for (const [k, x] of Object.entries(v)) if (!isNs(x)) flat[k] = x;
+    S.vOpts = S.aligner ? { [S.aligner]: flat } : {};
+  }
+}
 
 function toggleVOptInput(key, enabled) {
   const inp = document.getElementById('vv_' + key);
@@ -1486,7 +1510,7 @@ function toggleVOptInput(key, enabled) {
 function getVerboseFlags(al) {
   if (!S.verboseMode) return [];
   return (VERBOSE_OPTS[al] || []).reduce((acc, opt) => {
-    const v = S.vOpts[opt.key];
+    const v = vOptsFor(al)[opt.key];
     if (opt.type === 'check'  && v === true)                          acc.push(opt.cmd(v));
     if (opt.type === 'text'   && v && v.trim())                       acc.push(opt.cmd(v.trim()));
     if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(v));
@@ -1513,7 +1537,7 @@ function renderVerboseSection() {
   if (!opts.length) return '';
 
   const items = opts.map(opt => {
-    const val = S.vOpts[opt.key];
+    const val = vOptsFor(al)[opt.key];
 
     if (opt.type === 'check') {
       return `<div class="verbose-item">
@@ -1548,7 +1572,7 @@ function renderVerboseSection() {
           <input type="text" id="vv_${opt.key}" class="verbose-val-input"
             value="${esc(enabled ? String(val) : (opt.defaultVal||''))}"
             ${enabled?'':'disabled'}
-            oninput="if(S.vOpts['${opt.key}']!==null&&S.vOpts['${opt.key}']!==undefined)setVOpt('${opt.key}',this.value||null);refresh()">
+            oninput="if(getVOpt('${opt.key}')!==null&&getVOpt('${opt.key}')!==undefined)setVOpt('${opt.key}',this.value||null);refresh()">
         </div>
         <div class="verbose-why">${opt.why}</div>
       </div>`;
@@ -1873,7 +1897,7 @@ function buildNotes() {
   }
 
   // DRAGEN gVCF without the variant caller
-  if (al === 'dragen' && S.verboseMode && S.vOpts.dgGvcf && !S.dragenVC) {
+  if (al === 'dragen' && S.verboseMode && vOptsFor('dragen').dgGvcf && !S.dragenVC) {
     notes.push({ type: 'warn', text: '<strong>gVCF needs the variant caller:</strong> <code>--vc-emit-ref-confidence GVCF</code> has no effect unless "Call small variants" is enabled.' });
   }
 
@@ -2388,7 +2412,7 @@ mermaid.initialize({
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
-  if (restored) restoreUI();
+  if (restored) { migrateVOpts(); restoreUI(); }
   else refresh();
 })();
 </script>
