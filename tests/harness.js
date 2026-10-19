@@ -41,7 +41,7 @@ function load({ hash = '', storage = {}, mermaid = true } = {}) {
     navigator: {},
     setTimeout: () => 0,
     clearTimeout() {},
-    btoa, atob, URL, Blob,
+    btoa, atob, URL, Blob, TextEncoder, TextDecoder, Uint8Array,
   };
   if (mermaid) ctx.mermaid = { initialize() {}, render: async () => ({ svg: '' }) };
   ctx.window = ctx;

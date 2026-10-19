@@ -3254,7 +3254,7 @@ function refresh() {
 
   // Persist state
   try { localStorage.setItem('ap_state', JSON.stringify(S)); } catch(e) {}
-  try { history.replaceState(null, '', '#' + btoa(JSON.stringify(S))); } catch(e) {}
+  try { history.replaceState(null, '', '#' + encodeState(S)); } catch(e) {}
 
   // Analysis panel
   const bodyEl = document.getElementById('analysis-body');
@@ -3979,6 +3979,21 @@ if (typeof mermaid !== 'undefined') mermaid.initialize({
   flowchart: { curve: 'basis', padding: 12, htmlLabels: true },
 });
 
+/* URL-hash codec: base64 of UTF-8 JSON (plain btoa throws on non-Latin-1 characters).
+   decodeState also accepts old links, which were base64 of Latin-1/ASCII JSON. */
+function encodeState(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+function decodeState(b64) {
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch (e) { return bin; }
+}
+
 const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /* Keep only known keys whose type matches the defaults, so a stale or hand-edited
@@ -4005,7 +4020,7 @@ function sanitizeSaved(saved) {
   const hash = location.hash.slice(1);
   if (hash) {
     try {
-      const saved = sanitizeSaved(JSON.parse(atob(hash)));
+      const saved = sanitizeSaved(JSON.parse(decodeState(hash)));
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
