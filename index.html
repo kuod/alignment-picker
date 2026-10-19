@@ -807,6 +807,8 @@ const S = {
   kbT2g:         't2g.txt',
 };
 
+const DEFAULTS = JSON.parse(JSON.stringify(S));
+
 /* ═══════════════════════════════════════════════════
    ALIGNER DATABASE
 ═══════════════════════════════════════════════════ */
@@ -3907,9 +3909,9 @@ function migrateState() {
     else { S.tech = null; S.aligner = null; }
   }
   // Drop any tech/aligner combination that is no longer offered
-  const techs = TECH_OPTIONS[S.expType] || [];
+  const techs = _own(TECH_OPTIONS, S.expType) ? TECH_OPTIONS[S.expType] : [];
   if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
-  const a = ALIGNERS[S.aligner];
+  const a = _own(ALIGNERS, S.aligner) ? ALIGNERS[S.aligner] : null;
   if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
   if (!SC_CHEM[S.scChem]) S.scChem = 'v3';
 }
@@ -3976,25 +3978,52 @@ mermaid.initialize({
   flowchart: { curve: 'basis', padding: 12, htmlLabels: true },
 });
 
+const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+/* Keep only known keys whose type matches the defaults, so a stale or hand-edited
+   hash / localStorage value can't throw or inject odd types into the builders. */
+function sanitizeSaved(saved) {
+  const out = {};
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return out;
+  for (const [k, v] of Object.entries(saved)) {
+    if (k === 'dragenSample') { if (typeof v === 'string') out[k] = v; continue; }   // legacy, migrated later
+    if (!_own(DEFAULTS, k)) continue;
+    const d = DEFAULTS[k];
+    if (d === null) { if (v === null || typeof v === 'string') out[k] = v; }
+    else if (typeof d === 'object') { if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = v; }
+    else if (typeof v === typeof d) out[k] = v;
+  }
+  if (out.expType != null && !_own(TECH_OPTIONS, out.expType)) return {};
+  if (out.aligner != null && !_own(ALIGNERS, out.aligner)) out.aligner = null;
+  return out;
+}
+
 (function () {
   let restored = false;
   // URL hash takes priority (shareable links)
   const hash = location.hash.slice(1);
   if (hash) {
     try {
-      const saved = JSON.parse(atob(hash));
+      const saved = sanitizeSaved(JSON.parse(atob(hash)));
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
   // Fall back to localStorage
   if (!restored) {
     try {
-      const saved = JSON.parse(localStorage.getItem('ap_state') || '{}');
+      const saved = sanitizeSaved(JSON.parse(localStorage.getItem('ap_state') || '{}'));
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
-  if (restored) { migrateVOpts(); migrateState(); restoreUI(); }
-  else refresh();
+  if (restored) {
+    try { migrateVOpts(); migrateState(); restoreUI(); }
+    catch (e) {   // never leave the page dead on bad saved state
+      console.warn('Could not restore saved state, starting fresh:', e);
+      try { localStorage.removeItem('ap_state'); } catch (_) {}
+      Object.assign(S, JSON.parse(JSON.stringify(DEFAULTS)));
+      refresh();
+    }
+  } else refresh();
 })();
 </script>
 </body>
