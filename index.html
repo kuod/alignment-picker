@@ -3347,24 +3347,7 @@ function downloadScript() {
     `# Tool: ${ALIGNERS[al]?.label || al}`,
     `# Date: ${new Date().toISOString().slice(0, 10)}`,
     '',
-    '# ── Variables ──────────────────────────────────────',
-    `THREADS=${S.threads || '8'}`,
   ];
-
-  if (['salmon','kallisto'].includes(al)) {
-    lines.push(`TXOME="${S.txomeFa || 'transcriptome.fa'}"`);
-  } else {
-    lines.push(`REF="${S.ref || 'reference.fa'}"`);
-  }
-
-  if (isLong) {
-    lines.push(`READS="${S.reads || 'sample.fastq.gz'}"`);
-  } else {
-    lines.push(`R1="${S.r1 || 'sample_R1.fastq.gz'}"`);
-    if (S.paired || S.tech === 'singlecell') lines.push(`R2="${S.r2 || 'sample_R2.fastq.gz'}"`);
-  }
-  lines.push(`OUTPUT="${S.output || 'output'}"`);
-  lines.push('');
 
   const qcCmd = buildQCCmd();
   if (qcCmd) {

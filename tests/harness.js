@@ -30,7 +30,7 @@ function load({ hash = '', storage = {}, mermaid = true } = {}) {
       getElementById: (id) => els[id] || (els[id] = el()),
       querySelector: () => null,
       querySelectorAll: () => [],
-      createElement: () => el(),
+      createElement: () => ({ click() {} }),
     },
     location: { hash },
     history: { replaceState(_, __, h) { ctx.location.hash = h; } },
@@ -41,7 +41,7 @@ function load({ hash = '', storage = {}, mermaid = true } = {}) {
     navigator: {},
     setTimeout: () => 0,
     clearTimeout() {},
-    btoa, atob, URL, Blob, TextEncoder, TextDecoder, Uint8Array,
+    btoa, atob, URL, Blob: class extends Blob { constructor(p, o) { super(p, o); ctx.blobs.push(p.join('')); } }, blobs: [], TextEncoder, TextDecoder, Uint8Array,
   };
   if (mermaid) ctx.mermaid = { initialize() {}, render: async () => ({ svg: '' }) };
   ctx.window = ctx;
