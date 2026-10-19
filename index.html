@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alignment Picker — DNA &amp; RNA-seq</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js" integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2" crossorigin="anonymous"></script>
 <style>
 :root {
   --primary: #2563eb;
@@ -3874,6 +3874,7 @@ async function renderDiagram() {
   document.getElementById('diagram-aligner-name').textContent = ALIGNERS[S.aligner]?.label || '';
 
   try {
+    if (typeof mermaid === 'undefined') throw new Error('mermaid not loaded');
     const { svg } = await mermaid.render('mg_' + Date.now(), def);
     body.innerHTML = svg;
   } catch(e) {
@@ -3961,8 +3962,8 @@ function restoreUI() {
   refresh();
 }
 
-/* Init */
-mermaid.initialize({
+/* Init (Mermaid is optional: if the CDN is unreachable only the diagram is lost) */
+if (typeof mermaid !== 'undefined') mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   themeVariables: {
