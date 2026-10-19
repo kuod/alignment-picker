@@ -14,6 +14,8 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | DRAGEN | DNA short reads (WGS/WES; commercial, Illumina hardware/cloud) |
 | BWA-MEM | DNA short + long reads |
 | Bowtie2 | DNA short reads |
+| Bismark | DNA methylation — bisulfite / EM-seq (WGBS, RRBS, PBAT), Illumina |
+| bwa-meth | DNA methylation — bisulfite / EM-seq (directional WGBS, RRBS), Illumina |
 | Minimap2 | DNA long reads (PacBio, ONT) |
 | STAR | RNA-seq short reads |
 | HISAT2 | RNA-seq short reads |
@@ -27,6 +29,8 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 
 For BAM-producing aligners, step 5 adds optional coordinate sorting, indexing, duplicate marking (`samtools markdup`), alignment QC (`samtools flagstat`, `samtools stats`, `mosdepth` coverage with an optional target BED), and a BAM vs CRAM output selector. CRAM output requires the exact reference FASTA to decode later.
 
+For bisulfite / EM-seq data (DNA → "Bisulfite / EM-seq"), choose WGBS vs RRBS and the library type (directional, non-directional, PBAT). The QC tab switches to Trim Galore (`--rrbs` for RRBS), and step 5 adds deduplication (WGBS only) and methylation extraction: `deduplicate_bismark` + `bismark_methylation_extractor` for Bismark, `samtools markdup` + MethylDackel for bwa-meth.
+
 ## Citations
 
 If you use this tool to build a pipeline, please cite the underlying aligner:
@@ -36,6 +40,9 @@ If you use this tool to build a pipeline, please cite the underlying aligner:
 | BWA-MEM2 | Vasimuddin et al. IEEE IPDPS 2019. [doi:10.1109/IPDPS.2019.00041](https://doi.org/10.1109/IPDPS.2019.00041) |
 | BWA-MEM | Li H. arXiv:1303.3997 (2013). [arxiv:1303.3997](https://arxiv.org/abs/1303.3997) |
 | Bowtie2 | Langmead & Salzberg. *Nature Methods* 9, 357–359 (2012). [doi:10.1038/nmeth.1923](https://doi.org/10.1038/nmeth.1923) |
+| Bismark | Krueger & Andrews. *Bioinformatics* 27(11):1571–1572 (2011). [doi:10.1093/bioinformatics/btr167](https://doi.org/10.1093/bioinformatics/btr167) |
+| bwa-meth | Pedersen et al. arXiv:1401.1129 (2014). [arxiv:1401.1129](https://arxiv.org/abs/1401.1129) |
+| MethylDackel | Ryan DP. Software. [github.com/dpryan79/MethylDackel](https://github.com/dpryan79/MethylDackel) |
 | Minimap2 | Li H. *Bioinformatics* 34(18):3094–3100 (2018). [doi:10.1093/bioinformatics/bty191](https://doi.org/10.1093/bioinformatics/bty191) |
 | STAR | Dobin et al. *Bioinformatics* 29(1):15–21 (2013). [doi:10.1093/bioinformatics/bts635](https://doi.org/10.1093/bioinformatics/bts635) |
 | HISAT2 | Kim et al. *Nature Biotechnology* 37, 907–915 (2019). [doi:10.1038/s41587-019-0201-4](https://doi.org/10.1038/s41587-019-0201-4) |
