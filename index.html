@@ -3100,7 +3100,7 @@ function buildNotes() {
       notes.push({ type: 'info', text: `<strong>Keeping methylation tags:</strong> <code>samtools fastq -T ${MOD_TAGS}</code> writes the base-modification tags into each FASTQ header and <code>${al === 'bwa-mem' ? 'bwa mem -C' : al === 'winnowmap' ? 'winnowmap -y' : 'minimap2 -y'}</code> copies them into the alignments — downstream <a href="https://github.com/nanoporetech/modkit" target="_blank">modkit</a> (ONT) and <a href="https://github.com/PacificBiosciences/pb-CpG-tools" target="_blank">pb-CpG-tools</a> (PacBio) need them. Avoid <code>-T '*'</code> with a read group set: uBAM records often carry their own <code>RG:Z</code> tag, which would duplicate the one added by <code>-R</code>.` });
     }
     if (S.tech === 'ont' || S.tech === 'longrna') {
-      notes.push({ type: 'info', text: `<strong>ONT alternative:</strong> <code>dorado aligner ${S.ref || 'reference.fa'} ${S.reads || 'reads.bam'} &gt; aligned.bam</code> runs minimap2 inside dorado and keeps the modification tags with no FASTQ conversion.` });
+      notes.push({ type: 'info', text: `<strong>ONT alternative:</strong> <code>dorado aligner ${esc(S.ref || 'reference.fa')} ${esc(S.reads || 'reads.bam')} &gt; aligned.bam</code> runs minimap2 inside dorado and keeps the modification tags with no FASTQ conversion.` });
     }
   } else if (isLong && ['minimap2-pb','minimap2-ont','minimap2-rna','pbmm2','winnowmap'].includes(al)) {
     notes.push({ type: 'info', text: '<strong>Methylation calls?</strong> FASTQ input usually lacks the <code>MM</code>/<code>ML</code> base-modification tags. If your basecaller (dorado, Revio) produced an unaligned BAM, choose it as the input format to keep them for modkit / pb-CpG-tools.' });
