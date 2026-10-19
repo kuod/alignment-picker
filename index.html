@@ -564,6 +564,15 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">pbmm2</td>
+            <td class="cite-ref">
+              No dedicated paper — cite the software repository
+              (Pacific Biosciences. <em>pbmm2: a minimap2 SMRT wrapper for PacBio data.</em>
+              <a href="https://github.com/PacificBiosciences/pbmm2" target="_blank">github.com/PacificBiosciences/pbmm2</a>)
+              together with the Minimap2 paper above, whose alignment engine it wraps.
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">STAR</td>
             <td class="cite-ref">
               Dobin A, et al. <em>STAR: ultrafast universal RNA-seq aligner.</em>
@@ -662,6 +671,8 @@ const S = {
   r1:            'sample_R1.fastq.gz',
   r2:            'sample_R2.fastq.gz',
   reads:         'sample.fastq.gz',
+  lrInput:       'fastq', // long reads: 'fastq' | 'bam' (unaligned BAM, e.g. dorado / Revio)
+  pbPreset:      'HIFI',  // pbmm2 --preset for PacBio DNA: 'HIFI' | 'SUBREAD'
   output:        'output',
   // options
   threads:       '8',
@@ -859,6 +870,36 @@ const ALIGNERS = {
       mem: '~20 GB', time: '~10 min (human genome)',
       outputs: 'Single binary .mmi file (~20 GB for human)',
       note: 'Optional. Most useful in multi-sample projects to avoid re-indexing per run.',
+    },
+  },
+  'pbmm2': {
+    label: 'pbmm2 (PacBio)', tags: ['popular'],
+    dna: true, rna: true, quantOnly: false,
+    techs: ['pacbio','longrna'],
+    desc: 'PacBio\'s official minimap2 wrapper — native PacBio BAM in, sorted and indexed BAM out',
+    pros: [
+      'Reads PacBio unaligned BAM directly — keeps MM/ML methylation and other per-read tags with no FASTQ round-trip',
+      'Tuned presets: HIFI (default), SUBREAD (CLR), ISOSEQ (Iso-Seq / Kinnex transcripts)',
+      'Sorts on the fly (--sort) and writes the .bai index itself — no samtools sort step',
+      'Aligner used by PacBio\'s own HiFi WGS pipelines; output feeds pbsv, DeepVariant, TRGT and pb-CpG-tools',
+      'Soft-clips supplementary alignments, writes =/X CIGARs and trims repeated matches for better SV recall',
+    ],
+    cons: [
+      'PacBio data only — use plain Minimap2 for ONT',
+      'Writes BAM only; CRAM output needs a samtools conversion step',
+      'With BAM input only the sample name (--sample) can be overridden; ID/PL/LB come from the uBAM @RG',
+      'GitHub source is no longer updated (binary releases via bioconda); no published paper',
+    ],
+    best: 'PacBio HiFi WGS (small variants, SVs, 5mC methylation) and PacBio Iso-Seq / Kinnex long-read RNA',
+    notes: [],
+    idx: {
+      cmd: s => {
+        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        return `# Pre-indexing is OPTIONAL — pbmm2 align also accepts the FASTA directly\n# The .mmi bakes in the preset's k-mer/window size, so use the SAME --preset to align\n\npbmm2 index ${s.ref} ${mmi} --preset ${pbPreset(s)}`;
+      },
+      mem: '~10–20 GB (human genome)', time: '~5–10 min (human genome)',
+      outputs: 'Single binary .mmi file (preset-specific)',
+      note: 'Optional. An index built with one --preset cannot be reused with another (-k/-w cannot be overridden at align time). Plain minimap2 .mmi files also work.',
     },
   },
   'star': {
@@ -1163,6 +1204,23 @@ const VERBOSE_OPTS = {
       why: 'Prevents hard-clipping at supplementary alignment breakpoints. Required by Sniffles2 and some other ONT SV callers for correct breakpoint sequence retrieval.',
       cmd: () => '-Y' },
   ],
+  'pbmm2': [
+    { key: 'unmapped', type: 'check', flag: '--unmapped', label: 'Keep unmapped reads in output',
+      why: 'pbmm2 drops unmapped reads by default. Keep them when the aligned BAM must be the only copy of the data (e.g., archiving instead of the uBAM) or when you need unmapped-read counts for QC.',
+      cmd: () => '--unmapped' },
+    { key: 'strip', type: 'check', flag: '--strip', label: 'Strip per-base / kinetics tags',
+      why: 'Removes bulky per-base and pulse tags (ip, pw, dq, sq, st …) from BAM input, shrinking the output considerably. MM/ML methylation tags are kept. Do not use if you need kinetics for downstream tools.',
+      cmd: () => '--strip' },
+    { key: 'bestN', type: 'val', flag: '--best-n', label: 'Keep at most N best alignments per read', defaultVal: '1',
+      why: 'Default 0 keeps all primary and supplementary alignments. Set to 1 to keep only the single best alignment per read — rarely wanted for SV calling, which relies on split (supplementary) alignments.',
+      cmd: v => `--best-n ${v}` },
+    { key: 'minId', type: 'val', flag: '--min-gap-comp-id-perc', label: 'Min gap-compressed identity (%)', defaultVal: '70',
+      why: 'Alignments below this gap-compressed identity are removed (default 70). Lower it for divergent samples or cross-species alignment; set 0 to disable the filter.',
+      cmd: v => `--min-gap-comp-id-perc ${v}` },
+    { key: 'logInfo', type: 'check', flag: '--log-level INFO', label: 'Log mapping summary',
+      why: 'Prints mapped reads, mapped bases, mean identity, and timing / peak memory to the log when the run finishes — a quick sanity check without running samtools flagstat.',
+      cmd: () => '--log-level INFO' },
+  ],
   'star': [
     { key: 'mmNmax', type: 'val', flag: '--outFilterMultimapNmax', label: 'Max multimapping loci', defaultVal: '10',
       why: 'Reads mapping to more than this many loci are discarded (default 10). Set to 1 for unique-mappers only — important for allele-specific expression or when repetitive-region reads would confound analysis. Increase for lncRNA or transposon quantification.',
@@ -1400,7 +1458,13 @@ function renderParams() {
     readFields = field('Read 1 (R1)', `<input type="text" value="${esc(S.r1)}" oninput="S.r1=this.value;refresh()">`)
                + (S.paired ? field('Read 2 (R2)', `<input type="text" value="${esc(S.r2)}" oninput="S.r2=this.value;refresh()">`) : '');
   } else {
-    readFields = field('Reads FASTQ', `<input type="text" value="${esc(S.reads)}" oninput="S.reads=this.value;refresh()">`);
+    const bamIn = lrBam();
+    readFields = `<div class="field"><label>Input format</label>
+      <select onchange="setLrInput(this.value)">
+        <option value="fastq" ${!bamIn?'selected':''}>FASTQ / FASTA (.fastq.gz)</option>
+        <option value="bam"   ${bamIn ?'selected':''}>Unaligned BAM (dorado / Revio uBAM, keeps MM/ML tags)</option>
+      </select></div>`
+      + field(bamIn ? 'Reads unaligned BAM' : 'Reads FASTQ', `<input type="text" value="${esc(S.reads)}" oninput="S.reads=this.value;refresh()">`);
   }
 
   /* ---------- aligner-specific options ---------- */
@@ -1418,6 +1482,17 @@ function renderParams() {
           <option value="--very-sensitive" ${S.bt2Preset==='--very-sensitive'?'selected':''}>--very-sensitive (slower, more accurate)</option>
           <option value="--fast"           ${S.bt2Preset==='--fast'          ?'selected':''}>--fast</option>
           <option value="--very-fast"      ${S.bt2Preset==='--very-fast'     ?'selected':''}>--very-fast (fastest)</option>
+        </select>
+      </div>
+    </div>`;
+  } else if (al === 'pbmm2') {
+    extraOpts = S.tech === 'longrna'
+      ? `<div class="note info" style="margin-top:1rem;font-size:0.8rem;">Using <code>--preset ISOSEQ</code> (splice-aware) — for PacBio Iso-Seq / Kinnex reads only. For ONT cDNA or direct RNA choose Minimap2 (long-read RNA).</div>`
+      : `<div class="param-grid" style="margin-top:1rem;">
+      <div class="field"><label>Read type (--preset)</label>
+        <select onchange="S.pbPreset=this.value;refresh()">
+          <option value="HIFI"    ${pbPreset()==='HIFI'   ?'selected':''}>HIFI — HiFi / CCS reads (default)</option>
+          <option value="SUBREAD" ${pbPreset()==='SUBREAD'?'selected':''}>SUBREAD — CLR subreads</option>
         </select>
       </div>
     </div>`;
@@ -1458,13 +1533,36 @@ function renderParams() {
     ${S.verboseMode ? renderVerboseSection() : ''}`;
 }
 
+/* ── Long-read input format (FASTQ vs unaligned BAM) ── */
+const LR_DEFAULT = { fastq: 'sample.fastq.gz', bam: 'sample.unaligned.bam' };
+// Tags samtools fastq copies into the FASTQ comment: base modifications (MM/ML) and
+// dorado's MN (sequence length the MM/ML were computed on; modkit validates it).
+// Not '*': dorado uBAMs carry RG:Z, which would clash with minimap2 -R's own RG tag.
+const MOD_TAGS = 'MM,ML,MN';
+function lrBam() { return S.lrInput === 'bam' && ['pacbio','ont','longrna'].includes(S.tech); }
+function setLrInput(v) {
+  const old = S.lrInput === 'bam' ? 'bam' : 'fastq';
+  S.lrInput = v === 'bam' ? 'bam' : 'fastq';
+  if (!S.reads || S.reads === LR_DEFAULT[old]) S.reads = LR_DEFAULT[S.lrInput];
+  renderParams(); renderPostProc(); refresh();
+}
+// pbmm2 --preset: ISOSEQ for long-read RNA, otherwise HIFI (default) or SUBREAD (CLR)
+function pbPreset(s = S) {
+  return s.tech === 'longrna' ? 'ISOSEQ' : (s.pbPreset === 'SUBREAD' ? 'SUBREAD' : 'HIFI');
+}
+// pbmm2 --sort writes <out>.bam plus its .bai, so no samtools index is needed afterwards
+function pbmm2Indexed() {
+  return S.aligner === 'pbmm2' && S.outFmt !== 'cram' && S.sortBam && !S.markDups;
+}
+
 /* ── Sample / read group (shared by all BAM-producing aligners) ── */
 // Aligners with no SAM/BAM @RG header to attach a read group to
 const RG_NONE = ['salmon','kallisto','graphaligner'];
 // DNA aligners whose output usually feeds GATK / DeepVariant (warn when RG is empty)
-const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe'];
+const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe','pbmm2'];
 const RG_PLATFORMS = ['ILLUMINA','PACBIO','ONT','ELEMENT','ULTIMA','DNBSEQ','IONTORRENT'];
 function rgAutoPlatform() {
+  if (S.aligner === 'pbmm2') return 'PACBIO';
   return { illumina: 'ILLUMINA', pacbio: 'PACBIO', ont: 'ONT' }[S.tech] || '';
 }
 // Keep RG values shell- and SAM-safe: no whitespace, quotes, tabs or shell metacharacters
@@ -1500,6 +1598,11 @@ function rgArgs(al) {
       return [`--outSAMattrRGline ID:${rg.ID} SM:${rg.SM}${extra.map(([k, v]) => ` ${k}:${v}`).join('')}`];
     case 'vg-giraffe':
       return [`--sample ${rg.SM}`, `--read-group ${rg.ID}`];
+    case 'pbmm2':
+      // BAM input keeps the uBAM's own @RG (ID/PL/LB); pbmm2 can only override SM.
+      // FASTA/Q input has no @RG, so pass a full line with --rg.
+      if (lrBam()) return [`--sample ${rg.SM}`];
+      return [`--rg '@RG\\tID:${rg.ID}\\tSM:${rg.SM}${extra.map(([k, v]) => `\\t${k}:${v}`).join('')}'`];
     case 'dragen':
       return [`--RGID ${rg.ID}`, `--RGSM ${rg.SM}`, ...extra.map(([k, v]) => `--RG${k} ${v}`)];
     default:
@@ -1516,7 +1619,9 @@ function renderReadGroup() {
   const plOpts = [`<option value="" ${!S.rgPlatform?'selected':''}>Auto${auto ? ` (${auto})` : ' (omit)'}</option>`]
     .concat(RG_PLATFORMS.map(p => `<option value="${p}" ${S.rgPlatform===p?'selected':''}>${p}</option>`)).join('');
   const giraffeNote = S.aligner === 'vg-giraffe'
-    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">vg giraffe only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>` : '';
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">vg giraffe only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>`
+    : S.aligner === 'pbmm2' && lrBam()
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">With BAM input pbmm2 keeps the uBAM's own @RG lines (ID, PL, LB) and only overrides the sample name via <code>--sample</code>; without it SM comes from the uBAM, or <code>UnnamedSample</code>.</div>` : '';
   return `<div class="verbose-section-head" style="margin-top:1.1rem;">Sample / read group</div>
     <div class="param-grid">
       ${field('Sample name (SM)', `<input type="text" value="${esc(S.rgSample)}" placeholder="${S.aligner==='dragen'?'sample1 (default)':'leave empty for no @RG'}" oninput="S.rgSample=this.value;refresh()">`)}
@@ -1712,7 +1817,9 @@ function renderPostProc() {
   }
 
   el.innerHTML = fmtSel + `<div class="check-group">
-    ${check('sortBam', 'Sort BAM by coordinate (samtools sort)', 'Required by most downstream tools: GATK, featureCounts, HTSeq, IGV')}
+    ${S.aligner === 'pbmm2' && !cram
+      ? check('sortBam', 'Sort BAM by coordinate (pbmm2 --sort)', 'Sorted on the fly by pbmm2, which also writes the .bai index — no samtools sort step')
+      : check('sortBam', 'Sort BAM by coordinate (samtools sort)', 'Required by most downstream tools: GATK, featureCounts, HTSeq, IGV')}
     ${check('indexBam', 'Index BAM (samtools index)', 'Creates .bai index for random-access queries; required for IGV, most variant callers')}
     ${check('markDups', 'Mark PCR duplicates (samtools markdup)', 'Flags optical/PCR duplicates — recommended for WGS/WES; generally NOT for ChIP-seq or ATAC-seq')}
   </div>
@@ -1751,6 +1858,13 @@ function buildQCCmd() {
   const T   = S.threads || '8';
   const OUT = S.output  || 'output';
   const isLong = ['pacbio','ont','longrna'].includes(S.tech);
+
+  if (lrBam()) {
+    if (S.tech === 'pacbio') {
+      return `# PacBio QC — FastQC reads unaligned BAM directly\nfastqc -t ${T} -f bam ${S.reads} -o ${OUT}_fastqc/`;
+    }
+    return `# ONT / long-read RNA QC on the unaligned BAM\nNanoStat --ubam ${S.reads} --threads ${T} \\\n  > ${OUT}_nanostats.txt\n\n# Optional: length / quality filter that keeps the uBAM and its MM/ML tags\n# (avg(qual) is the arithmetic mean Phred — not identical to NanoFilt -q)\nsamtools view -@ ${T} -b \\\n  -e 'length(seq)>=1000 && avg(qual)>=8' \\\n  -o ${OUT}_filtered.bam ${S.reads}`;
+  }
 
   if (S.tech === 'ont' || S.tech === 'longrna') {
     return `# ONT / long-read RNA QC\nNanoStat --fastq ${S.reads} --threads ${T} \\\n  > ${OUT}_nanostats.txt\n\n# Optional: filter by quality and minimum length\nNanoFilt -q 8 -l 1000 ${S.reads} \\\n  | gzip > ${OUT}_filtered.fastq.gz`;
@@ -1808,6 +1922,13 @@ function buildAlignCmd() {
   const pipe    = (cmd) => S.sortBam
     ? `${cmd}${fixmate} \\\n  | ${samSort}`
     : `${cmd} \\\n  | ${samView}`;
+  // Unaligned-BAM long reads: stream FASTQ with the modification tags in the
+  // read comment; the aligner (minimap2 -y / bwa mem -C) copies them to SAM.
+  const LRBAM  = lrBam();
+  const bamFq  = `samtools fastq -@ ${T} -T ${MOD_TAGS} ${LONG} \\\n  | `;
+  const mm2    = (a, preset) => LRBAM
+    ? `${bamFq}minimap2 -y -ax ${preset}${rgf(a)}${vf(a)} -t ${T} ${REF} -`
+    : `minimap2 -ax ${preset}${rgf(a)}${vf(a)} -t ${T} ${REF} ${LONG}`;
 
   switch (al) {
 
@@ -1826,8 +1947,9 @@ function buildAlignCmd() {
 
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
-      const inReads = S.tech === 'illumina' ? reads : LONG;
-      lines.push(pipe(`bwa mem${xFlag} -t ${T}${rgf('bwa-mem')}${vf('bwa-mem')} ${REF} ${inReads}`));
+      const longBam = S.tech !== 'illumina' && LRBAM;
+      const inReads = S.tech === 'illumina' ? reads : longBam ? '-' : LONG;
+      lines.push(pipe(`${longBam ? bamFq : ''}bwa mem${longBam ? ' -C' : ''}${xFlag} -t ${T}${rgf('bwa-mem')}${vf('bwa-mem')} ${REF} ${inReads}`));
       break;
     }
 
@@ -1840,12 +1962,26 @@ function buildAlignCmd() {
 
     case 'minimap2-pb':
       lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
-      lines.push(pipe(`minimap2 -ax map-hifi${rgf('minimap2-pb')}${vf('minimap2-pb')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(mm2('minimap2-pb', 'map-hifi')));
       break;
 
     case 'minimap2-ont':
-      lines.push(pipe(`minimap2 -ax map-ont${rgf('minimap2-ont')}${vf('minimap2-ont')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(mm2('minimap2-ont', 'map-ont')));
       break;
+
+    case 'pbmm2': {
+      // pbmm2 reads uBAM (keeping all tags) or FASTQ natively
+      const mmi = (REF || '').replace(/\.[^.]+$/, '') + '.mmi';
+      const opts = ` \\\n  --preset ${pbPreset()}${rgfml('pbmm2')}${vfml('pbmm2')} \\\n  -j ${T}`;
+      if (CRAM) {
+        // pbmm2 writes BAM only: stream unsorted BAM to stdout for samtools to encode
+        lines.push('# pbmm2 writes BAM only — stream it to samtools for CRAM encoding');
+        lines.push(pipe(`pbmm2 align ${mmi} ${LONG}${opts}`));
+      } else {
+        lines.push(`pbmm2 align ${mmi} ${LONG} ${OUT}.bam${opts}${S.sortBam ? ' \\\n  --sort' : ''}`);
+      }
+      break;
+    }
 
     case 'star': {
       const sorted = S.sortBam ? 'SortedByCoordinate' : 'Unsorted';
@@ -1887,7 +2023,7 @@ function buildAlignCmd() {
 
     case 'minimap2-rna':
       lines.push('# Use -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
-      lines.push(pipe(`minimap2 -ax splice:hq${rgf('minimap2-rna')}${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(mm2('minimap2-rna', 'splice:hq')));
       break;
 
     case 'vg-giraffe': {
@@ -1896,14 +2032,22 @@ function buildAlignCmd() {
       break;
     }
 
-    case 'graphaligner':
-      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf${S.verboseMode && vOptsFor('graphaligner').preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
+    case 'graphaligner': {
+      let gaIn = LONG;
+      if (LRBAM) {
+        gaIn = `${OUT}_reads.fastq.gz`;
+        lines.push('# GraphAligner reads FASTA/FASTQ only — convert the uBAM first (MM/ML tags are lost; GAF has no read tags)');
+        lines.push(`samtools fastq -@ ${T} ${LONG} | gzip > ${gaIn}`);
+        lines.push('');
+      }
+      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${gaIn} \\\n  -a ${OUT}.gaf${S.verboseMode && vOptsFor('graphaligner').preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
       lines.push('');
       lines.push(`# To convert GAF → BAM, build a GBZ from the SAME GFA used above,`);
       lines.push(`# then surject the GAF onto the graph's reference paths:`);
       lines.push(`# vg gbwt -g ${S.graphFile.replace(/\.gfa$/, '.gbz')} -G ${S.graphFile}`);
       lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -G -b -t ${T} ${OUT}.gaf \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
       break;
+    }
 
     default:
       return null;
@@ -1943,7 +2087,8 @@ function buildAlignCmd() {
 
     // mosdepth needs an index, so index automatically when it is requested
     if (S.indexBam || (S.mosdepth && S.sortBam)) {
-      postLines.push(`samtools index -@ ${T} ${finalAln}`);
+      if (pbmm2Indexed()) postLines.push(`# ${finalAln}.bai was already written by pbmm2 --sort`);
+      else postLines.push(`samtools index -@ ${T} ${finalAln}`);
     }
 
     if (S.flagstat) {
@@ -1977,7 +2122,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
+const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen','pbmm2'];
 
 function highlight(raw) {
   const e = raw
@@ -2055,6 +2200,36 @@ function buildNotes() {
     notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
   }
 
+  // Long-read input format / base-modification tags
+  const isLong = ['pacbio','ont','longrna'].includes(S.tech);
+  if (isLong && lrBam()) {
+    if (al === 'pbmm2') {
+      notes.push({ type: 'success', text: '<strong>Native uBAM input:</strong> pbmm2 reads the unaligned BAM directly and carries every per-read tag — including <code>MM</code>/<code>ML</code> 5mC calls — into the aligned BAM, ready for <a href="https://github.com/PacificBiosciences/pb-CpG-tools" target="_blank">pb-CpG-tools</a>.' });
+    } else if (al === 'graphaligner') {
+      notes.push({ type: 'warn', text: '<strong>Modification tags are lost:</strong> GraphAligner only reads FASTA/FASTQ and writes GAF, so the uBAM is converted to FASTQ first and <code>MM</code>/<code>ML</code> methylation tags are dropped. Use a linear aligner for methylation analysis.' });
+    } else {
+      notes.push({ type: 'info', text: `<strong>Keeping methylation tags:</strong> <code>samtools fastq -T ${MOD_TAGS}</code> writes the base-modification tags into each FASTQ header and <code>${al === 'bwa-mem' ? 'bwa mem -C' : 'minimap2 -y'}</code> copies them into the alignments — downstream <a href="https://github.com/nanoporetech/modkit" target="_blank">modkit</a> (ONT) and <a href="https://github.com/PacificBiosciences/pb-CpG-tools" target="_blank">pb-CpG-tools</a> (PacBio) need them. Avoid <code>-T '*'</code> with a read group set: uBAM records often carry their own <code>RG:Z</code> tag, which would duplicate the one added by <code>-R</code>.` });
+    }
+    if (S.tech === 'ont' || S.tech === 'longrna') {
+      notes.push({ type: 'info', text: `<strong>ONT alternative:</strong> <code>dorado aligner ${S.ref || 'reference.fa'} ${S.reads || 'reads.bam'} &gt; aligned.bam</code> runs minimap2 inside dorado and keeps the modification tags with no FASTQ conversion.` });
+    }
+  } else if (isLong && ['minimap2-pb','minimap2-ont','minimap2-rna','pbmm2'].includes(al)) {
+    notes.push({ type: 'info', text: '<strong>Methylation calls?</strong> FASTQ input usually lacks the <code>MM</code>/<code>ML</code> base-modification tags. If your basecaller (dorado, Revio) produced an unaligned BAM, choose it as the input format to keep them for modkit / pb-CpG-tools.' });
+  }
+
+  // pbmm2 specifics
+  if (al === 'pbmm2') {
+    if (S.tech === 'longrna') {
+      notes.push({ type: 'info', text: '<strong>PacBio only:</strong> <code>--preset ISOSEQ</code> is tuned for PacBio Iso-Seq / Kinnex reads. Long-read RNA from ONT should use Minimap2 (long-read RNA) instead.' });
+    }
+    if (S.markDups) {
+      notes.push({ type: 'info', text: '<strong>HiFi duplicates:</strong> PacBio recommends <code>pbmarkdup</code> on the unaligned HiFi reads <em>before</em> alignment (<code>pbmarkdup movie.hifi_reads.bam dedup.bam</code>) — it is reference-free and only needed for amplified libraries. <code>samtools markdup</code> on the aligned BAM uses single-end position only.' });
+    }
+    if (S.outFmt === 'cram') {
+      notes.push({ type: 'info', text: '<strong>CRAM via samtools:</strong> pbmm2 only writes BAM, so its unsorted output is streamed to stdout and encoded by <code>samtools</code> (losing pbmm2\'s on-the-fly sort).' });
+    }
+  }
+
   const bamPost = !info.quantOnly && !info.graphOutput && !info.builtinPost;
 
   // indexBam without sorting
@@ -2066,7 +2241,7 @@ function buildNotes() {
   if (bamPost && S.mosdepth) {
     if (!S.sortBam) {
       notes.push({ type: 'warn', text: '<strong>mosdepth needs a sorted, indexed file:</strong> it exits with "alignment file must be indexed" otherwise, so the mosdepth step is commented out. Enable "Sort BAM" above.' });
-    } else if (!S.indexBam) {
+    } else if (!S.indexBam && !pbmm2Indexed()) {
       notes.push({ type: 'info', text: '<strong>Index added for mosdepth:</strong> mosdepth requires a <code>.bai</code>/<code>.crai</code> index, so a <code>samtools index</code> step was added automatically.' });
     }
   }
@@ -2250,6 +2425,12 @@ function buildDiagram() {
   const RIDX = dl(S.refIdx      || 'genome_index');
   const SIDX = dl(S.salmonIdx   || 'salmon_index');
   const KIDX = dl(S.kallistoIdx || 'kallisto_index.idx');
+  const LRBAM = lrBam();
+  // Long-read input node wired into `to`; uBAM input goes through samtools fastq first
+  function lrIn(to) {
+    if (!LRBAM) return `    LR(["${LONG}"]):::file\n    LR --> ${to}\n`;
+    return `    LR(["${LONG}"]):::file\n    S2FQ["samtools fastq -T ${MOD_TAGS}"]:::tool\n    LR --> S2FQ -->|FASTQ + tags| ${to}\n`;
+  }
 
   const C = `    classDef file fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
     classDef tool fill:#fef9c3,stroke:#ca8a04,color:#713f12
@@ -2281,7 +2462,7 @@ function buildDiagram() {
       cur = 'MDBAM';
       curFile = `${OUT}.markdup.${EXT}`;
     }
-    const indexed = S.indexBam || (S.mosdepth && S.sortBam);
+    const indexed = (S.indexBam || (S.mosdepth && S.sortBam)) && !pbmm2Indexed();
     if (indexed) {
       s += `    SIDXB["samtools index"]:::tool\n    BAIN(["${curFile}.${IEXT}"]):::out\n    ${cur} --> SIDXB --> BAIN\n`;
     }
@@ -2296,7 +2477,7 @@ function buildDiagram() {
         s += `    MWARN["⚠ Sort required for mosdepth"]:::tool\n    ${cur} -.-> MWARN\n`;
       } else {
         const bed = dl((S.mosdepthBed || '').trim());
-        s += `    MOSD["mosdepth${bed ? ' --by' : ''}"]:::tool\n    MOSO(["${OUT}.mosdepth.summary.txt${bed ? `<br/>${OUT}.regions.bed.gz` : ''}"]):::out\n    ${cur} --> MOSD --> MOSO\n    BAIN -.-> MOSD\n`;
+        s += `    MOSD["mosdepth${bed ? ' --by' : ''}"]:::tool\n    MOSO(["${OUT}.mosdepth.summary.txt${bed ? `<br/>${OUT}.regions.bed.gz` : ''}"]):::out\n    ${cur} --> MOSD --> MOSO\n${indexed ? '    BAIN -.-> MOSD\n' : ''}`;
         if (bed) s += `    TBED(["${bed}"]):::file\n    TBED -.-> MOSD\n`;
       }
     }
@@ -2337,17 +2518,14 @@ ${bamOut('BWA')}${post('BAM')}
     case 'bwa-mem': {
       const xf   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const long = ['pacbio','ont'].includes(S.tech);
-      const inN  = long ? `    LR(["${LONG}"]):::file` : srIn;
-      const inA  = long ? 'LR' : srArr;
+      const inN  = long ? lrIn('BWA') : `${srIn}\n    ${srArr} --> BWA\n`;
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
-${inN}
-    BIDX["bwa index"]:::tool
+${inN}    BIDX["bwa index"]:::tool
     IDXF(["index files<br/>.amb .ann .bwt .pac .sa"]):::idx
-    BWA["bwa mem${xf} -t ${T}"]:::tool
+    BWA["bwa mem${long && LRBAM ? ' -C' : ''}${xf} -t ${T}"]:::tool
 ${bamOut('BWA')}${post('BAM')}
-    REF --> BIDX --> IDXF --> BWA
-    ${inA} --> BWA`;
+    REF --> BIDX --> IDXF --> BWA`;
     }
 
     case 'bowtie2':
@@ -2365,25 +2543,37 @@ ${bamOut('BT2')}${post('BAM')}
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
     MMI(["ref.mmi<br/>optional pre-index"]):::idx
-    LR(["${LONG}"]):::file
-    MM2["minimap2 -ax map-hifi -t ${T}"]:::tool
+${lrIn('MM2')}    MM2["minimap2${LRBAM ? ' -y' : ''} -ax map-hifi -t ${T}"]:::tool
 ${bamOut('MM2')}${post('BAM')}
     REF -.->|minimap2 -d| MMI
     REF --> MM2
-    MMI -.->|use in place of FASTA| MM2
-    LR --> MM2`;
+    MMI -.->|use in place of FASTA| MM2`;
 
     case 'minimap2-ont':
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
     MMI(["ref.mmi<br/>optional pre-index"]):::idx
-    LR(["${LONG}"]):::file
-    MM2["minimap2 -ax map-ont -t ${T}"]:::tool
+${lrIn('MM2')}    MM2["minimap2${LRBAM ? ' -y' : ''} -ax map-ont -t ${T}"]:::tool
 ${bamOut('MM2')}${post('BAM')}
     REF -.->|minimap2 -d| MMI
     REF --> MM2
-    MMI -.->|use in place of FASTA| MM2
-    LR --> MM2`;
+    MMI -.->|use in place of FASTA| MM2`;
+
+    case 'pbmm2': {
+      const P = pbPreset();
+      const out = CRAM
+        ? bamOut('PB')
+        : `    BAM(["${OUT}.bam${S.sortBam ? '<br/>+ .bai' : ''}"]):::out\n    PB --> BAM\n`;
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    LR(["${LONG}"]):::file
+    PIDX["pbmm2 index --preset ${P}"]:::tool
+    MMI(["ref.mmi"]):::idx
+    PB["pbmm2 align --preset ${P}${S.sortBam && !CRAM ? '<br/>--sort' : ''} -j ${T}"]:::tool
+${out}${post('BAM')}
+    REF --> PIDX --> MMI --> PB
+    LR -->|${LRBAM ? 'uBAM, tags kept' : 'FASTQ'}| PB`;
+    }
 
     case 'star': {
       const coord = S.sortBam ? 'sortedByCoord.' : '';
@@ -2448,13 +2638,11 @@ ${srIn}
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
     MMI(["ref.mmi<br/>optional pre-index"]):::idx
-    LR(["${LONG}"]):::file
-    MM2["minimap2 -ax splice:hq -t ${T}"]:::tool
+${lrIn('MM2')}    MM2["minimap2${LRBAM ? ' -y' : ''} -ax splice:hq -t ${T}"]:::tool
 ${bamOut('MM2')}${post('BAM')}
     REF -.->|minimap2 -d| MMI
     REF --> MM2
-    MMI -.->|use in place of FASTA| MM2
-    LR --> MM2`;
+    MMI -.->|use in place of FASTA| MM2`;
 
     case 'dragen': {
       const HT  = dl(S.dragenRefDir || 'dragen_hash_table');
@@ -2500,15 +2688,15 @@ ${bamOut('VGG')}${post('BAM')}
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
     VCF(["${VCF}"]):::file
-    LR(["${LONG}"]):::file
-    VCON["vg construct -t ${T}"]:::tool
+${LRBAM
+  ? `    LR(["${LONG}"]):::file\n    S2FQ["samtools fastq"]:::tool\n    LRFQ(["${OUT}_reads.fastq.gz"]):::file\n    LR --> S2FQ --> LRFQ --> GA\n`
+  : `    LR(["${LONG}"]):::file\n    LR --> GA\n`}    VCON["vg construct -t ${T}"]:::tool
     GFA2(["${GFA}"]):::idx
     GA["GraphAligner -t ${T}"]:::tool
     GAF(["${OUT}.gaf"]):::out
     REF --> VCON
     VCF --> VCON
     VCON --> GFA2 --> GA
-    LR --> GA
     GA --> GAF`;
     }
 
@@ -2557,6 +2745,8 @@ function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 /* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
 function migrateState() {
   migrateReadGroup();   // before the aligner may be cleared below
+  if (S.lrInput !== 'bam') S.lrInput = 'fastq';
+  if (!['HIFI','SUBREAD'].includes(S.pbPreset)) S.pbPreset = 'HIFI';
   if (S.tech === 'pangenome') {
     if (S.aligner === 'vg-giraffe')        S.tech = 'illumina';
     else if (S.aligner === 'graphaligner') S.tech = 'pacbio';

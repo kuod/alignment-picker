@@ -15,6 +15,7 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | BWA-MEM | DNA short + long reads |
 | Bowtie2 | DNA short reads |
 | Minimap2 | DNA long reads (PacBio, ONT) |
+| pbmm2 | PacBio long reads — DNA (HiFi, CLR) and Iso-Seq RNA; reads unaligned BAM natively |
 | STAR | RNA-seq short reads |
 | HISAT2 | RNA-seq short reads |
 | Salmon | RNA-seq quantification |
@@ -22,6 +23,10 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | Minimap2 | Long-read RNA-seq |
 | vg giraffe | Pangenome / graph genome — DNA, Illumina short reads |
 | GraphAligner | Pangenome / graph genome — DNA, PacBio + ONT long reads |
+
+## Long-read input
+
+For PacBio, ONT and long-read RNA, the reads can be given as FASTQ or as an **unaligned BAM** (dorado / Revio output). With uBAM input, minimap2-based commands stream `samtools fastq -T MM,ML,MN reads.bam | minimap2 -y ...` so the base-modification tags needed by `modkit` / `pb-CpG-tools` reach the aligned BAM; pbmm2 reads the uBAM directly.
 
 ## Post-processing
 
@@ -37,6 +42,7 @@ If you use this tool to build a pipeline, please cite the underlying aligner:
 | BWA-MEM | Li H. arXiv:1303.3997 (2013). [arxiv:1303.3997](https://arxiv.org/abs/1303.3997) |
 | Bowtie2 | Langmead & Salzberg. *Nature Methods* 9, 357–359 (2012). [doi:10.1038/nmeth.1923](https://doi.org/10.1038/nmeth.1923) |
 | Minimap2 | Li H. *Bioinformatics* 34(18):3094–3100 (2018). [doi:10.1093/bioinformatics/bty191](https://doi.org/10.1093/bioinformatics/bty191) |
+| pbmm2 | No paper — cite the repository, [github.com/PacificBiosciences/pbmm2](https://github.com/PacificBiosciences/pbmm2), together with Minimap2 (above), which it wraps |
 | STAR | Dobin et al. *Bioinformatics* 29(1):15–21 (2013). [doi:10.1093/bioinformatics/bts635](https://doi.org/10.1093/bioinformatics/bts635) |
 | HISAT2 | Kim et al. *Nature Biotechnology* 37, 907–915 (2019). [doi:10.1038/s41587-019-0201-4](https://doi.org/10.1038/s41587-019-0201-4) |
 | Salmon | Patro et al. *Nature Methods* 14, 417–419 (2017). [doi:10.1038/nmeth.4197](https://doi.org/10.1038/nmeth.4197) |
