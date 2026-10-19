@@ -11,6 +11,7 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | Aligner | Data type |
 |---|---|
 | BWA-MEM2 | DNA short reads |
+| DRAGEN | DNA short reads (WGS/WES; commercial, Illumina hardware/cloud) |
 | BWA-MEM | DNA short + long reads |
 | Bowtie2 | DNA short reads |
 | Minimap2 | DNA long reads (PacBio, ONT) |
@@ -37,5 +38,6 @@ If you use this tool to build a pipeline, please cite the underlying aligner:
 | Salmon | Patro et al. *Nature Methods* 14, 417–419 (2017). [doi:10.1038/nmeth.4197](https://doi.org/10.1038/nmeth.4197) |
 | Kallisto | Bray et al. *Nature Biotechnology* 34, 525–527 (2016). [doi:10.1038/nbt.3519](https://doi.org/10.1038/nbt.3519) |
 | samtools | Danecek et al. *GigaScience* 10(2):giab008 (2021). [doi:10.1093/gigascience/giab008](https://doi.org/10.1093/gigascience/giab008) |
+| DRAGEN | Behera et al. *Nature Biotechnology* (2024). [doi:10.1038/s41587-024-02382-1](https://doi.org/10.1038/s41587-024-02382-1) |
 | vg / vg giraffe | Sirén et al. *Science* 374(6574):abg8871 (2021). [doi:10.1126/science.abg8871](https://doi.org/10.1126/science.abg8871) |
 | GraphAligner | Rautiainen & Marschall. *Genome Biology* 21:253 (2020). [doi:10.1186/s13059-020-02157-2](https://doi.org/10.1186/s13059-020-02157-2) |

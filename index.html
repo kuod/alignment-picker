@@ -123,6 +123,7 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .tag-popular  { background: #ede9fe; color: #5b21b6; }
 .tag-memory   { background: #fef3c7; color: #92400e; }
 .tag-new      { background: #dbeafe; color: #1d4ed8; }
+.tag-paid     { background: #fee2e2; color: #991b1b; }
 
 /* ── Param grid ── */
 .param-grid {
@@ -602,6 +603,14 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">DRAGEN</td>
+            <td class="cite-ref">
+              Behera S, et al. <em>Comprehensive genome analysis and variant detection at scale using DRAGEN.</em>
+              <span class="cite-journal">Nature Biotechnology</span>, 2024.
+              <a href="https://doi.org/10.1038/s41587-024-02382-1" target="_blank">doi:10.1038/s41587-024-02382-1</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">vg / vg giraffe</td>
             <td class="cite-ref">
               Sirén J, et al. <em>Pangenomics enables genotyping of known structural variants in 5202 diverse genomes.</em>
@@ -661,6 +670,10 @@ const S = {
   vcfFile:       'variants.vcf.gz',
   vgIdxPrefix:   'graph_index',
   graphFile:     'pangenome.gfa',
+  // DRAGEN
+  dragenRefDir:  'dragen_hash_table',
+  dragenSample:  'sample1',
+  dragenVC:      true,
 };
 
 /* ═══════════════════════════════════════════════════
@@ -690,6 +703,34 @@ const ALIGNERS = {
       mem: '~60 GB peak', time: '~2 h (human genome)',
       outputs: '${ref}.0123, .amb, .ann, .bwt.2bit.64, .pac',
       note: 'Index is NOT compatible with BWA-MEM — must be rebuilt when switching tools.',
+    },
+  },
+  'dragen': {
+    label: 'DRAGEN', tags: ['fast','paid'],
+    dna: true, rna: false, quantOnly: false, builtinPost: true,
+    techs: ['illumina'],
+    desc: 'Illumina\'s hardware-accelerated WGS/WES pipeline — alignment, sorting, dedup, and variant calling in one pass',
+    pros: [
+      '30× human WGS from FASTQ to VCF in ~30 min on an FPGA server',
+      'Sorting, duplicate marking, and BAM indexing done internally — no samtools steps',
+      'Among the top performers for SNV/indel accuracy in the precisionFDA Truth Challenge V2',
+      'Multigenome (graph) hash tables reduce reference bias with no extra steps',
+      'Same run can emit CNV, SV, and repeat-expansion calls',
+    ],
+    cons: [
+      'Commercial license — requires DRAGEN FPGA server or a paid cloud instance (AWS F1/F2, Illumina Connected Analytics)',
+      'Closed source; results tied to DRAGEN version — pin versions for reproducibility',
+      'Hash table is version-specific and must be rebuilt (or re-downloaded) on DRAGEN upgrades',
+      'Illumina short reads only in this mode',
+    ],
+    best: 'High-throughput clinical and population-scale Illumina WGS/WES where turnaround time matters',
+    notes: [],
+    idx: {
+      cmd: s => `mkdir -p ${s.dragenRefDir}\ndragen \\\n  --build-hash-table true \\\n  --ht-reference ${s.ref} \\\n  --output-directory ${s.dragenRefDir}`,
+      mem: 'Runs on DRAGEN server (~128 GB host RAM)',
+      time: '~1 h (human genome)',
+      outputs: '${dragenRefDir}/ hash_table.cfg, hash_table.cmp, ref_index.bin, …',
+      note: 'For hg38, Illumina ships prebuilt multigenome (graph) hash tables that are recommended over building your own. Hash tables are tied to the DRAGEN software version.',
     },
   },
   'bwa-mem': {
@@ -1038,6 +1079,21 @@ const VERBOSE_OPTS = {
       why: 'Reads scoring below this threshold are not written to output. Lower values (e.g., 20) recover weakly mapping reads in divergent or repetitive regions. Higher values (40+) reduce noise but can miss real alignments near repeat boundaries.',
       cmd: v => `-T ${v}` },
   ],
+  'dragen': [
+    { key: 'dgGvcf', type: 'check', flag: '--vc-emit-ref-confidence GVCF', label: 'Emit gVCF',
+      why: 'Writes a genome VCF with reference-confidence blocks in addition to the VCF. Required for joint genotyping across a cohort (DRAGEN gVCF Genotyper or GATK GenotypeGVCFs). Needs the variant caller enabled.',
+      cmd: () => '--vc-emit-ref-confidence GVCF' },
+    { key: 'dgCnv', type: 'check', flag: '--enable-cnv true', label: 'Copy number variant calling',
+      why: 'Runs the DRAGEN CNV caller in the same pass. Self-normalization is enabled so no panel of normals is needed — appropriate for WGS; for WES a panel of normals is recommended instead.',
+      cmd: () => '--enable-cnv true \\\n  --cnv-enable-self-normalization true' },
+    { key: 'dgSv', type: 'check', flag: '--enable-sv true', label: 'Structural variant calling',
+      why: 'Runs the Manta-based DRAGEN SV caller on the aligned reads. Detects deletions, insertions, inversions, duplications, and translocations ≥50 bp.',
+      cmd: () => '--enable-sv true' },
+    { key: 'dgTmp', type: 'text', flag: '--intermediate-results-dir', label: 'Intermediate results directory',
+      placeholder: '/staging/tmp',
+      why: 'Where DRAGEN writes temporary files. Point this at the fast local NVMe staging volume on a DRAGEN server — using network storage slows the run considerably.',
+      cmd: v => `--intermediate-results-dir ${v}` },
+  ],
   'bwa-mem': [
     { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
       placeholder: "@RG\\tID:sample1\\tSM:sample1\\tPL:ILLUMINA\\tLB:lib1",
@@ -1232,6 +1288,7 @@ const TAG_HTML = {
   popular: '<span class="tag tag-popular">Popular</span>',
   memory:  '<span class="tag tag-memory">Low memory</span>',
   new:     '<span class="tag tag-new">New</span>',
+  paid:    '<span class="tag tag-paid">Commercial</span>',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1319,6 +1376,10 @@ function renderParams() {
                field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
   } else if (['bowtie2','hisat2'].includes(al)) {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
+  } else if (al === 'dragen') {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Hash Table Directory', `<input type="text" value="${esc(S.dragenRefDir)}" oninput="S.dragenRefDir=this.value;refresh()">`) +
+               field('Sample Name (RGSM)', `<input type="text" value="${esc(S.dragenSample)}" oninput="S.dragenSample=this.value;refresh()">`);
   } else if (al === 'vg-giraffe') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
@@ -1529,6 +1590,15 @@ function renderPostProc() {
     return;
   }
 
+  if (info.builtinPost) {
+    el.innerHTML = `<div class="check-group">
+    ${check('sortBam', 'Sort BAM by coordinate (--enable-sort)', 'Done in-line by DRAGEN; a .bai index is written alongside the sorted BAM')}
+    ${check('markDups', 'Mark duplicates (--enable-duplicate-marking)', 'DRAGEN\'s built-in duplicate marking; requires sorting')}
+    ${check('dragenVC', 'Call small variants (--enable-variant-caller)', 'Runs the DRAGEN germline SNV/indel caller in the same pass and writes a VCF')}
+  </div>`;
+    return;
+  }
+
   if (info.graphOutput) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
       GraphAligner outputs GAF format, not BAM. BAM conversion requires
@@ -1618,6 +1688,16 @@ function buildAlignCmd() {
       lines.push(pipe(`bwa-mem2 mem -t ${T}${vf('bwa-mem2')} ${REF} ${reads}`));
       break;
 
+    case 'dragen': {
+      const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-1 ${R1}`;
+      const SM    = S.dragenSample || 'sample1';
+      const sort  = S.sortBam ? 'true' : 'false';
+      const dedup = S.markDups && S.sortBam ? 'true' : 'false';
+      lines.push(`mkdir -p ${OUT}_dragen`);
+      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg} \\\n  --RGID ${SM} \\\n  --RGSM ${SM} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format BAM \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
+      break;
+    }
+
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
@@ -1701,7 +1781,7 @@ function buildAlignCmd() {
   }
 
   /* ── Post-processing ── */
-  const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput;
+  const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput || ALIGNERS[al]?.builtinPost;
   if (!isQuant) {
     const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
     const postLines = [];
@@ -1731,7 +1811,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner'];
+const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
 
 function highlight(raw) {
   const e = raw
@@ -1766,12 +1846,14 @@ function buildNotes() {
   }
 
   // Sort required for markdup
-  if (S.markDups && !S.sortBam && !info.quantOnly) {
+  if (S.markDups && !S.sortBam && al === 'dragen') {
+    notes.push({ type: 'warn', text: '<strong>Sort required:</strong> DRAGEN duplicate marking requires <code>--enable-sort true</code>; it has been turned off in the command. Enable sorting above.' });
+  } else if (S.markDups && !S.sortBam && !info.quantOnly) {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> <code>samtools markdup</code> requires coordinate-sorted input. Enable "Sort BAM by coordinate" above.' });
   }
 
   // Paired-end recommended
-  if (!S.paired && ['bwa-mem2','bwa-mem','star','hisat2'].includes(al)) {
+  if (!S.paired && ['bwa-mem2','bwa-mem','dragen','star','hisat2'].includes(al)) {
     notes.push({ type: 'info', text: '<strong>Paired-end recommended:</strong> Most RNA-seq and WGS workflows use paired-end reads for better alignment accuracy and insert-size estimation.' });
   }
 
@@ -1788,6 +1870,16 @@ function buildNotes() {
   // BWA-MEM long read warning
   if (al === 'bwa-mem' && ['pacbio','ont'].includes(S.tech)) {
     notes.push({ type: 'warn', text: '<strong>Consider Minimap2:</strong> For PacBio and ONT long reads, Minimap2 generally provides higher accuracy and speed than BWA-MEM\'s long-read modes.' });
+  }
+
+  // DRAGEN gVCF without the variant caller
+  if (al === 'dragen' && S.verboseMode && S.vOpts.dgGvcf && !S.dragenVC) {
+    notes.push({ type: 'warn', text: '<strong>gVCF needs the variant caller:</strong> <code>--vc-emit-ref-confidence GVCF</code> has no effect unless "Call small variants" is enabled.' });
+  }
+
+  // DRAGEN licensing
+  if (al === 'dragen') {
+    notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
   }
 
   // Long reads + indexBam
@@ -2142,6 +2234,25 @@ ${bamOut('MM2')}${post('BAM')}
     REF --> MM2
     MMI -.->|use in place of FASTA| MM2
     LR --> MM2`;
+
+    case 'dragen': {
+      const HT  = dl(S.dragenRefDir || 'dragen_hash_table');
+      const ODIR = `${OUT}_dragen/${OUT}`;
+      let tail = S.sortBam
+        ? `    BAM(["${ODIR}.bam + .bai"]):::out\n    DRG --> BAM\n`
+        : `    BAM(["${ODIR}.bam"]):::out\n    DRG --> BAM\n`;
+      if (S.dragenVC) tail += `    VCF(["${ODIR}.hard-filtered.vcf.gz"]):::out\n    DRG --> VCF\n`;
+      const steps = ['map/align', S.sortBam && 'sort', S.markDups && S.sortBam && 'dedup', S.dragenVC && 'call'].filter(Boolean).join(' → ');
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    HTB["dragen --build-hash-table"]:::tool
+    HTD(["${HT}/"]):::idx
+    DRG["dragen<br/>${steps}"]:::tool
+${tail}
+    REF --> HTB --> HTD --> DRG
+    ${srArr} --> DRG`;
+    }
 
     case 'vg-giraffe': {
       const VPFX = dl(S.vgIdxPrefix || 'graph_index');
