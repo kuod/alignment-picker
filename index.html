@@ -963,11 +963,11 @@ const ALIGNERS = {
     best: 'Population genetics, diverse cohorts, pangenome-aware variant calling, HPRC graph workflows',
     notes: [],
     idx: {
-      cmd: s => `vg autoindex \\\n  --workflow giraffe \\\n  --vcf ${s.vcfFile} \\\n  --ref ${s.ref} \\\n  --prefix ${s.vgIdxPrefix} \\\n  --threads ${s.threads}`,
+      cmd: s => `vg autoindex \\\n  --workflow giraffe \\\n  --vcf ${s.vcfFile} \\\n  --ref-fasta ${s.ref} \\\n  --prefix ${s.vgIdxPrefix} \\\n  --threads ${s.threads}`,
       mem: '~50 GB (human + 1000G variants)',
       time: '~2–4 h (human genome)',
-      outputs: '${prefix}.giraffe.gbz, ${prefix}.dist, ${prefix}.min',
-      note: 'vg autoindex handles graph construction, GBWT haplotype indexing, and minimizer index in one command. Use a phased VCF (e.g., 1000 Genomes) for best haplotype representation.',
+      outputs: '${prefix}.giraffe.gbz, ${prefix}.dist, ${prefix}.shortread.withzip.min, ${prefix}.shortread.zipcodes',
+      note: 'vg autoindex handles graph construction, GBWT haplotype indexing, distance index, and minimizer + zipcode indexes in one command. Use a phased VCF (e.g., 1000 Genomes) for best haplotype representation. Older vg releases wrote a single ${prefix}.min with no zipcodes file — adjust -m/-z to match the files you have.',
     },
   },
   'graphaligner': {
@@ -1173,23 +1173,22 @@ const VERBOSE_OPTS = {
   'vg-giraffe': [
     { key: 'sample', type: 'text', flag: '--sample', label: 'Sample name',
       placeholder: 'NA12878',
-      why: 'Embeds a sample name in the output SAM/BAM header. Required for downstream vg call and GATK pangenome variant calling. Equivalent to the SM field in a BAM read group.',
+      why: 'Sample name (SM) attached to every alignment. When --read-group is also set, giraffe writes an @RG header line with ID and SM; GATK HaplotypeCaller and DeepVariant need SM to identify the sample.',
       cmd: v => `--sample '${v}'` },
-    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group (RG line)',
-      placeholder: 'ID:sample1\tLB:lib1\tPL:ILLUMINA',
-      why: 'Adds a full @RG header line to the output. Required for GATK HaplotypeCaller. Use tab-separated fields matching the SAM spec.',
+    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group ID',
+      placeholder: 'sample1_lane1',
+      why: 'Read group name only (not a full @RG line): tags each read with RG:Z:NAME and, together with --sample, adds "@RG ID:NAME SM:SAMPLE" to the header. Add other fields (LB, PL) afterwards with samtools addreplacerg if your pipeline needs them.',
       cmd: v => `--read-group '${v}'` },
-    { key: 'nosec', type: 'check', flag: '--no-secondary', label: 'Suppress secondary alignments',
-      why: 'Limits output to primary alignments only. Reduces file size and simplifies variant calling pipelines that discard secondary reads anyway.',
-      cmd: () => '--no-secondary' },
-    { key: 'mapq', type: 'select', flag: '--mapq-method', label: 'MAPQ method',
+    { key: 'multimaps', type: 'val', flag: '--max-multimaps', label: 'Max alignments per read', defaultVal: '1',
+      why: 'Default 1 reports only the primary alignment. Raising it also emits up to N−1 secondary alignments per read — useful for inspecting multi-mapping reads, but most variant-calling pipelines expect the default.',
+      cmd: v => `--max-multimaps ${v}` },
+    { key: 'preset', type: 'select', flag: '--parameter-preset', label: 'Parameter preset',
       options: [
-        { val: 'fast',    label: 'fast (default)' },
-        { val: 'exact',   label: 'exact (more accurate, slower)' },
-        { val: 'adaptive', label: 'adaptive (balanced)' },
+        { val: '',     label: '— default —' },
+        { val: 'fast', label: 'fast (fewer seeds/extensions, faster)' },
       ],
-      why: '"fast" is the default and sufficient for most variant calling. "exact" computes mapping quality more accurately but is significantly slower — use when MAPQ precision is critical (e.g., allele-specific expression, difficult regions).',
-      cmd: v => `--mapq-method ${v}` },
+      why: '"default" is tuned for accuracy on short reads. "fast" caps minimizer hits, extensions and alignments per read for higher throughput at a small accuracy cost — reasonable for large cohorts where runtime dominates.',
+      cmd: v => `--parameter-preset ${v}` },
   ],
   'graphaligner': [
     { key: 'preset', type: 'select', flag: '-x', label: 'Graph type preset',
@@ -1685,7 +1684,7 @@ function buildAlignCmd() {
 
     case 'vg-giraffe': {
       const inFlags = S.paired ? `-f ${R1} \\\n  -f ${R2}` : `-f ${R1}`;
-      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.min \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
+      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.shortread.withzip.min \\\n  -z ${S.vgIdxPrefix}.shortread.zipcodes \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
       break;
     }
 
@@ -2151,7 +2150,7 @@ ${bamOut('MM2')}${post('BAM')}
     VCF(["${VCF}"]):::file
 ${srIn}
     VAUTO["vg autoindex<br/>--workflow giraffe"]:::tool
-    GBZ(["${VPFX}.giraffe.gbz<br/>.dist  .min"]):::idx
+    GBZ(["${VPFX}.giraffe.gbz<br/>.dist  .min  .zipcodes"]):::idx
     VGG["vg giraffe -t ${T}"]:::tool
 ${bamOut('VGG')}${post('BAM')}
     REF --> VAUTO
