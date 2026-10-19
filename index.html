@@ -1199,11 +1199,11 @@ const VERBOSE_OPTS = {
       ],
       why: 'Selects alignment parameters tuned to the graph type. Use vg for variation graphs (built with vg construct or from HPRC). Use dbg for de Bruijn graphs from genome assemblers.',
       cmd: v => `-x ${v}` },
-    { key: 'bw', type: 'val', flag: '--bandwidth', label: 'Alignment bandwidth', defaultVal: '50',
-      why: 'Controls the DP band width during graph alignment. Larger values improve sensitivity for reads with high error rates (ONT) or complex indels at the cost of runtime. Default 50 is good for HiFi; increase to 100+ for ONT.',
+    { key: 'bw', type: 'val', flag: '--bandwidth', label: 'Alignment bandwidth', defaultVal: '10',
+      why: 'Controls the DP band width during graph alignment. Larger values improve sensitivity for reads with high error rates (ONT) or complex indels at the cost of runtime. The vg preset sets 10 (dbg sets 5); increase it for noisier reads.',
       cmd: v => `--bandwidth ${v}` },
-    { key: 'multimap', type: 'val', flag: '--multimap-score-fraction', label: 'Multimapping score fraction', defaultVal: '0.99',
-      why: 'Reports secondary alignments with score ≥ this fraction of the primary score. Set to 1.0 to suppress all secondary alignments. Useful when studying repetitive or duplicated graph regions.',
+    { key: 'multimap', type: 'val', flag: '--multimap-score-fraction', label: 'Multimapping score fraction', defaultVal: '0.9',
+      why: 'Discards alignments whose score is below this fraction of the best overlapping alignment (default 0.9). Raise toward 1.0 to keep only the best-scoring alignments; lower it to retain more secondary alignments in repetitive or duplicated graph regions.',
       cmd: v => `--multimap-score-fraction ${v}` },
   ],
   'minimap2-rna': [
@@ -1532,7 +1532,8 @@ function renderPostProc() {
   if (info.graphOutput) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
       GraphAligner outputs GAF format, not BAM. BAM conversion requires
-      <code>vg surject</code> — the align command includes a commented example.</p>`;
+      <code>vg surject</code> against a GBZ built from the same GFA
+      (<code>vg gbwt -g graph.gbz -G graph.gfa</code>) — the align command includes a commented example.</p>`;
     return;
   }
 
@@ -1690,10 +1691,12 @@ function buildAlignCmd() {
     }
 
     case 'graphaligner':
-      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf \\\n  --output-format GAF \\\n  -x vg${vfml('graphaligner')} \\\n  -t ${T}`);
+      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf${S.verboseMode && S.vOpts.preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
       lines.push('');
-      lines.push(`# To convert GAF → BAM (requires a GBZ index for vg surject):`);
-      lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -F ${OUT}.gaf -b -t ${T} \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
+      lines.push(`# To convert GAF → BAM, build a GBZ from the SAME GFA used above,`);
+      lines.push(`# then surject the GAF onto the graph's reference paths:`);
+      lines.push(`# vg gbwt -g ${S.graphFile.replace(/\.gfa$/, '.gbz')} -G ${S.graphFile}`);
+      lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -G -b -t ${T} ${OUT}.gaf \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
       break;
 
     default:
