@@ -2044,7 +2044,7 @@ function renderParams() {
 
   el.innerHTML = `
     <div class="param-grid">
-      ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${S.threads}" oninput="S.threads=this.value;refresh()">`)}
+      ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${esc(S.threads)}" oninput="S.threads=this.value;refresh()">`)}
       ${refPresetField()}
       ${refField}
       ${field('Output Prefix', `<input type="text" value="${esc(S.output)}" oninput="S.output=this.value;refresh()">`)}
@@ -3891,7 +3891,9 @@ function toggleCitations() {
 }
 
 /* ── tiny XSS-safe escape for attribute values ── */
-function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 /* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
 function migrateState() {
