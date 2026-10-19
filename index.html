@@ -575,6 +575,29 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">Bismark</td>
+            <td class="cite-ref">
+              Krueger F, Andrews SR. <em>Bismark: a flexible aligner and methylation caller for Bisulfite-Seq applications.</em>
+              <span class="cite-journal">Bioinformatics</span> 27(11):1571–1572, 2011.
+              <a href="https://doi.org/10.1093/bioinformatics/btr167" target="_blank">doi:10.1093/bioinformatics/btr167</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">bwa-meth</td>
+            <td class="cite-ref">
+              Pedersen BS, Eyring K, De S, Yang IV, Schwartz DA. <em>Fast and accurate alignment of long bisulfite-seq reads.</em>
+              <span class="cite-journal">arXiv</span>:1401.1129, 2014.
+              <a href="https://arxiv.org/abs/1401.1129" target="_blank">arxiv:1401.1129</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">MethylDackel</td>
+            <td class="cite-ref">
+              Ryan DP. <em>MethylDackel: methylation extraction from BS-seq alignments</em> (software).
+              <a href="https://github.com/dpryan79/MethylDackel" target="_blank">github.com/dpryan79/MethylDackel</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">Minimap2</td>
             <td class="cite-ref">
               Li H. <em>Minimap2: pairwise alignment for nucleotide sequences.</em>
@@ -761,6 +784,12 @@ const S = {
   dragenVC:      true,
   // DRAGMAP (open-source DRAGEN mapper)
   dragmapRefDir: 'dragmap_hash_table',
+  // Bisulfite / methylation
+  bsProtocol:    'wgbs',             // 'wgbs' | 'rrbs'
+  bsLib:         'directional',      // 'directional' | 'non_directional' | 'pbat'
+  bsExtract:     true,
+  bismarkGenome: 'bismark_genome',
+  bwamethIdx:    'bwa',              // 'bwa' | 'mem2'
   // Sample / read group (shared by all BAM-producing aligners; empty sample = no RG)
   rgSample:      '',
   rgId:          '',
@@ -942,6 +971,58 @@ const ALIGNERS = {
       mem: '~3 GB', time: '~1 h (human genome)',
       outputs: '${index}.{1..4}.bt2, ${index}.rev.{1,2}.bt2',
       note: 'Parallel building with -p requires Bowtie2 ≥ 2.4.1.',
+    },
+  },
+  'bismark': {
+    label: 'Bismark', tags: ['popular'],
+    dna: true, rna: false, quantOnly: false, builtinPost: true,
+    techs: ['bisulfite'],
+    desc: 'Bowtie2-based bisulfite aligner and methylation caller — the reference tool for WGBS, RRBS, and PBAT',
+    pros: [
+      'Complete suite: alignment, deduplication, methylation extraction, M-bias, and HTML reports',
+      'Handles directional, non-directional, and PBAT libraries explicitly',
+      'The most widely used and benchmarked bisulfite aligner; nf-core/methylseq default',
+      'Coverage (.cov) and cytosine reports load directly into methylKit, DSS, bsseq, SeqMonk',
+    ],
+    cons: [
+      'Slow — two (directional) or four (non-directional) Bowtie2 runs per read; scale with --parallel',
+      'Memory-hungry when parallelised (~10–16 GB per --parallel instance for human)',
+      'Writes its own BAM naming scheme; output is unsorted and must stay that way for dedup and extraction',
+      'End-to-end Bowtie2 mode is less tolerant of untrimmed adapters and indels than bwa-meth',
+    ],
+    best: 'RRBS, PBAT / single-cell BS-seq, non-directional libraries, and standard WGBS / EM-seq pipelines',
+    notes: [],
+    idx: {
+      cmd: s => `mkdir -p ${s.bismarkGenome}\n# Bismark indexes every .fa / .fasta(.gz) file in the genome folder\ncp ${s.ref} ${s.bismarkGenome}/\nbismark_genome_preparation --parallel ${bsPar(2, 2)} ${s.bismarkGenome}`,
+      mem: '~8–16 GB (two bowtie2-build jobs)', time: '~2–4 h (human genome)',
+      outputs: '${genome_folder}/Bisulfite_Genome/CT_conversion/ and GA_conversion/ (BS_CT.*.bt2, BS_GA.*.bt2)',
+      note: 'Builds C→T and G→A converted Bowtie 2 indexes of the genome. --parallel N runs N threads for each of the two strand indexes (2N cores total). The same folder is passed to bismark --genome.',
+    },
+  },
+  'bwa-meth': {
+    label: 'bwa-meth', tags: ['fast'],
+    dna: true, rna: false, quantOnly: false,
+    techs: ['bisulfite'],
+    desc: 'Fast bisulfite aligner wrapping BWA-MEM (or BWA-MEM2) on in-silico converted reads; pair with MethylDackel',
+    pros: [
+      'Several times faster than Bismark on large WGBS / EM-seq runs',
+      'Local alignment tolerates untrimmed adapters and indels; good mapping on long reads',
+      'Standard SAM output — streams straight into samtools sort / markdup like any DNA aligner',
+      'MethylDackel extraction is fast, multi-threaded, and avoids double-counting overlapping mates',
+    ],
+    cons: [
+      'Directional libraries only — no non-directional or PBAT mode',
+      'Alignment only: methylation calling, M-bias, and dedup need MethylDackel / samtools',
+      'C→T converted index is ~2× the genome size (larger still with bwa-mem2)',
+      'Less established for RRBS than Bismark',
+    ],
+    best: 'Large directional WGBS and EM-seq cohorts where throughput matters',
+    notes: [],
+    idx: {
+      cmd: s => `bwameth.py ${s.bwamethIdx === 'mem2' ? 'index-mem2' : 'index'} ${s.ref}\n\n# MethylDackel needs a .fai index of the original reference\nsamtools faidx ${s.ref}`,
+      mem: '~10 GB with bwa; bwa-mem2 needs far more (~28 bytes per bp of the 2× c2t genome)', time: '~3–6 h (human genome)',
+      outputs: '${ref}.bwameth.c2t + BWA (or BWA-MEM2) index files, ${ref}.fai',
+      note: 'Writes a C→T / G→A converted copy of the reference (${ref}.bwameth.c2t) and indexes it. bwameth.py detects whether a BWA or BWA-MEM2 index is present and runs the matching aligner.',
     },
   },
   'minimap2-pb': {
@@ -1369,6 +1450,7 @@ const TECH_OPTIONS = {
     { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads) — also Element AVITI and MGI/DNBSEQ short reads' },
     { val: 'pacbio',    label: 'PacBio Long Reads',       desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
     { val: 'ont',       label: 'Oxford Nanopore',         desc: 'ONT reads, ultra-long reads (up to megabases)' },
+    { val: 'bisulfite', label: 'Bisulfite / EM-seq (Illumina)', desc: 'DNA methylation: WGBS, RRBS, EM-seq, PBAT short reads' },
   ],
   rna: [
     { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads — also Element AVITI and MGI/DNBSEQ' },
@@ -1476,6 +1558,29 @@ const VERBOSE_OPTS = {
     { key: 'N', type: 'val', flag: '-N', label: 'Seed mismatch allowance', defaultVal: '0',
       why: 'Mismatches allowed in the seed alignment (0 or 1, default 0). Setting to 1 roughly triples runtime but improves sensitivity, particularly useful for divergent samples or SNP-rich regions.',
       cmd: v => `-N ${v}` },
+  ],
+  'bismark': [
+    { key: 'local', type: 'check', flag: '--local', label: 'Local alignment mode',
+      why: 'Runs Bowtie 2 in local mode so reads can be soft-clipped. Recovers reads with residual adapter or low-quality ends (e.g. PBAT / single-cell libraries), at the cost of speed and a slightly higher risk of spurious alignments.',
+      cmd: () => '--local' },
+    { key: 'X', type: 'val', flag: '-X', label: 'Maximum insert size', defaultVal: '500',
+      why: 'Largest fragment length accepted as a valid paired-end alignment (Bismark default 500). EM-seq and enzymatic-fragmentation libraries often have longer inserts — raise to 700–1000 if the mapping report shows many discordant pairs.',
+      cmd: v => `-X ${v}` },
+    { key: 'un', type: 'check', flag: '--unmapped', label: 'Write unmapped reads to FASTQ',
+      why: 'Saves reads that failed to align (_unmapped_reads.fq.gz). Useful for troubleshooting low mapping rates — e.g. re-aligning them in single-end or --local mode.',
+      cmd: () => '--unmapped' },
+    { key: 'amb', type: 'check', flag: '--ambiguous', label: 'Write multi-mapping reads to FASTQ',
+      why: 'Saves reads that aligned equally well to more than one position (_ambiguous_reads.fq.gz). They are excluded from the BAM either way.',
+      cmd: () => '--ambiguous' },
+  ],
+  'bwa-meth': [
+    { key: 'saf', type: 'select', flag: '--set-as-failed', label: 'Flag one strand as QC-fail',
+      options: [{ val: '', label: 'Off (default)' }, { val: 'f', label: 'f — original top (OT)' }, { val: 'r', label: 'r — original bottom (OB)' }],
+      why: 'Single-strand targeted bisulfite captures only read one strand; alignments to the other strand are artefacts. This marks them 0x200 (QC fail) so MethylDackel and samtools ignore them.',
+      cmd: v => `--set-as-failed ${v}` },
+    { key: 'nochim', type: 'check', flag: '--do-not-penalize-chimeras', label: 'Keep chimeric-looking reads',
+      why: 'By default bwa-meth marks reads whose longest match covers less than 44% of the read as QC-fail and unpairs them. Disable that heuristic if your library has legitimately split reads.',
+      cmd: () => '--do-not-penalize-chimeras' },
   ],
   'minimap2-pb': [
     { key: 'nosec', type: 'check', flag: '--secondary=no', label: 'Suppress secondary alignments',
@@ -1818,6 +1923,9 @@ function renderParams() {
   } else if (al === 'dragmap') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Hash Table Directory', `<input type="text" value="${esc(S.dragmapRefDir)}" oninput="S.dragmapRefDir=this.value;refresh()">`);
+  } else if (al === 'bismark') {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Bismark Genome Folder', `<input type="text" value="${esc(S.bismarkGenome)}" oninput="S.bismarkGenome=this.value;refresh()">`);
   } else if (al === 'vg-giraffe') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
@@ -1897,6 +2005,28 @@ function renderParams() {
         </select>
       </div>
     </div>`;
+  } else if (al === 'bismark' || al === 'bwa-meth') {
+    extraOpts = `<div class="param-grid" style="margin-top:1rem;">
+      <div class="field"><label>Protocol</label>
+        <select onchange="S.bsProtocol=this.value;renderPostProc();refresh()">
+          <option value="wgbs" ${S.bsProtocol!=='rrbs'?'selected':''}>WGBS / EM-seq (whole genome)</option>
+          <option value="rrbs" ${S.bsProtocol==='rrbs'?'selected':''}>RRBS (MspI reduced representation)</option>
+        </select>
+      </div>
+      <div class="field"><label>Library type</label>
+        <select onchange="S.bsLib=this.value;refresh()">
+          <option value="directional"     ${S.bsLib==='directional'    ?'selected':''}>Directional (default — most kits, EM-seq)</option>
+          <option value="non_directional" ${S.bsLib==='non_directional'?'selected':''}>Non-directional (--non_directional)</option>
+          <option value="pbat"            ${S.bsLib==='pbat'           ?'selected':''}>PBAT (--pbat)</option>
+        </select>
+      </div>
+      ${al === 'bwa-meth' ? `<div class="field"><label>Index backend</label>
+        <select onchange="S.bwamethIdx=this.value;refresh()">
+          <option value="bwa"  ${S.bwamethIdx!=='mem2'?'selected':''}>BWA-MEM (bwameth.py index)</option>
+          <option value="mem2" ${S.bwamethIdx==='mem2'?'selected':''}>BWA-MEM2 (bwameth.py index-mem2, faster)</option>
+        </select>
+      </div>` : ''}
+    </div>`;
   } else if (al === 'salmon') {
     extraOpts = `<div class="param-grid" style="margin-top:1rem;">
       <div class="field"><label>Library / Strand Type</label>
@@ -1967,7 +2097,7 @@ const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont',
 const RG_PLATFORMS = ['ILLUMINA','PACBIO','ONT','ELEMENT','ULTIMA','DNBSEQ','IONTORRENT'];
 function rgAutoPlatform() {
   if (S.aligner === 'pbmm2') return 'PACBIO';
-  return { illumina: 'ILLUMINA', pacbio: 'PACBIO', ont: 'ONT' }[S.tech] || '';
+  return { illumina: 'ILLUMINA', pacbio: 'PACBIO', ont: 'ONT', bisulfite: 'ILLUMINA' }[S.tech] || '';
 }
 // Keep RG values shell- and SAM-safe: no whitespace, quotes, tabs or shell metacharacters
 function rgClean(v) {
@@ -2018,6 +2148,12 @@ function rgArgs(al) {
     case 'bowtie':
       // header @RG line only; per-read RG:Z tags are added by samtools addreplacerg in the align command
       return [`--sam-RG ID:${rg.ID}`, `--sam-RG SM:${rg.SM}`, ...extra.map(([k, v]) => `--sam-RG ${k}:${v}`)];
+    case 'bwa-meth':
+      // passed through to bwa mem -R; literal \t as for BWA
+      return [`--read-group '@RG\\tID:${rg.ID}\\tSM:${rg.SM}${extra.map(([k, v]) => `\\t${k}:${v}`).join('')}'`];
+    case 'bismark':
+      // Bismark writes @RG ID/SM only (PL fixed to ILLUMINA, no LB)
+      return ['--rg_tag', `--rg_id ${rg.ID}`, `--rg_sample ${rg.SM}`];
     default:
       return [];
   }
@@ -2034,7 +2170,11 @@ function renderReadGroup() {
   const giraffeNote = ['vg-giraffe','dragmap'].includes(S.aligner)
     ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">${S.aligner === 'dragmap' ? 'DRAGMAP (dragen-os)' : 'vg giraffe'} only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>`
     : S.aligner === 'pbmm2' && lrBam()
-    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">With BAM input pbmm2 keeps the uBAM's own @RG lines (ID, PL, LB) and only overrides the sample name via <code>--sample</code>; without it SM comes from the uBAM, or <code>UnnamedSample</code>.</div>` : '';
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">With BAM input pbmm2 keeps the uBAM's own @RG lines (ID, PL, LB) and only overrides the sample name via <code>--sample</code>; without it SM comes from the uBAM, or <code>UnnamedSample</code>.</div>`
+    : S.aligner === 'bismark'
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">Bismark writes <code>@RG ID SM</code> with <code>PL:ILLUMINA</code> fixed; LB and other platforms are not supported — use <code>samtools addreplacerg</code> afterwards if needed.</div>`
+    : S.aligner === 'bwa-meth'
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">Without a sample name, bwa-meth still adds an @RG line, using the R1 file name for ID and SM.</div>` : '';
   return `<div class="verbose-section-head" style="margin-top:1.1rem;">Sample / read group</div>
     <div class="param-grid">
       ${field('Sample name (SM)', `<input type="text" value="${esc(S.rgSample)}" placeholder="${S.aligner==='dragen'?'sample1 (default)':'leave empty for no @RG'}" oninput="S.rgSample=this.value;refresh()">`)}
@@ -2230,6 +2370,33 @@ function renderPostProc() {
         : ''}
     </div>`;
 
+  if (S.aligner === 'bismark') {
+    const rrbs = S.bsProtocol === 'rrbs';
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.9rem;">
+      Bismark writes its own unsorted BAM; deduplication and methylation extraction need mates on adjacent lines,
+      so they run on that file and coordinate sorting (if enabled) produces a separate copy for viewing and QC.</p>`
+    + fmtSel + `<div class="check-group">
+    ${rrbs
+      ? `<div class="check-item" style="opacity:0.6;cursor:default;"><input type="checkbox" disabled><div><div class="check-label">Deduplicate (deduplicate_bismark)</div><div class="check-desc">Skipped for RRBS — MspI fragments start at the same sites by design, so "duplicates" are mostly genuine</div></div></div>`
+      : check('markDups', 'Deduplicate (deduplicate_bismark)', 'Removes PCR duplicates (same chromosome, start, and strand) — recommended for WGBS / EM-seq')}
+    ${check('bsExtract', 'Extract methylation (bismark_methylation_extractor)', 'Per-cytosine calls, bedGraph, and .cov coverage files (CpG/CHG/CHH), M-bias table, then bismark2report HTML')}
+    ${check('sortBam', 'Sort + index a copy (samtools sort / index)', 'Coordinate-sorted BAM/CRAM for IGV, flagstat/stats, and mosdepth — made after extraction')}
+  </div>
+  <div class="list-head" style="color:var(--muted);margin:1.1rem 0 0.4rem;">Alignment QC</div>
+  <div class="check-group">
+    ${check('flagstat', 'Mapping summary (samtools flagstat)', 'Mapped %, properly paired % → &lt;prefix&gt;.flagstat.txt')}
+    ${check('samStats', 'Detailed stats (samtools stats)', 'Insert size and base-quality histograms → &lt;prefix&gt;.stats.txt')}
+    <label class="check-item">
+      <input type="checkbox" ${S.mosdepth?'checked':''} onchange="S.mosdepth=this.checked;renderPostProc();refresh()">
+      <div><div class="check-label">Coverage depth (mosdepth)</div><div class="check-desc">Needs the sorted, indexed copy</div></div>
+    </label>
+  </div>
+  ${S.mosdepth ? `<div class="param-grid" style="margin-top:0.75rem;">
+    ${field('Target regions BED <span style="font-weight:400;color:var(--muted)">(optional, --by)</span>', `<input type="text" value="${esc(S.mosdepthBed)}" placeholder="targets.bed" oninput="S.mosdepthBed=this.value;refresh()">`)}
+  </div>` : ''}`;
+    return;
+  }
+
   if (info.builtinPost) {
     el.innerHTML = fmtSel + `<div class="check-group">
     ${check('sortBam', 'Sort BAM by coordinate (--enable-sort)', 'Done in-line by DRAGEN; a .bai index is written alongside the sorted BAM')}
@@ -2265,6 +2432,10 @@ function renderPostProc() {
   </div>
   ${S.mosdepth ? `<div class="param-grid" style="margin-top:0.75rem;">
     ${field('Target regions BED <span style="font-weight:400;color:var(--muted)">(optional, --by — e.g. WES capture)</span>', `<input type="text" value="${esc(S.mosdepthBed)}" placeholder="targets.bed" oninput="S.mosdepthBed=this.value;refresh()">`)}
+  </div>` : ''}${S.aligner === 'bwa-meth' ? `
+  <div class="list-head" style="color:var(--muted);margin:1.1rem 0 0.4rem;">Methylation calling</div>
+  <div class="check-group">
+    ${check('bsExtract', 'Extract methylation (MethylDackel mbias + extract)', 'M-bias plots, then per-CpG bedGraph (&lt;prefix&gt;_CpG.bedGraph); needs the sorted, indexed file (index is added automatically)')}
   </div>` : ''}`;
 }
 
@@ -2284,6 +2455,18 @@ function switchTab(tab) {
 /* ═══════════════════════════════════════════════════
    BUILD QC COMMAND
 ═══════════════════════════════════════════════════ */
+// Bisulfite helpers: a process count of floor(threads / perProc), at least min
+function bsPar(perProc, min = 1) {
+  const t = parseInt(S.threads, 10);
+  return Math.max(min, Math.floor((t > 0 ? t : 8) / perProc));
+}
+// Trim Galore output name: sample_R1.fastq.gz → sample_R1_val_1.fq.gz
+function tgName(file, suffix) {
+  const f  = String(file || '').replace(/.*\//, '');
+  const gz = /\.gz$/.test(f);
+  return f.replace(/\.gz$/, '').replace(/\.(fastq|fq)$/, '') + suffix + (gz ? '.fq.gz' : '.fq');
+}
+
 function buildQCCmd() {
   if (!S.tech) return null;
   const T   = S.threads || '8';
@@ -2313,6 +2496,25 @@ function buildQCCmd() {
     // Small RNA: inserts (~22 nt) are shorter than the read, so every read runs into the 3' adapter
     const AD = 'TGGAATTCTCGGGTGCCAAGG';   // Illumina TruSeq Small RNA 3' adapter
     return `# Small RNA — adapter trimming is ESSENTIAL (inserts are shorter than the read)\n# TGGAATTCTCGGGTGCCAAGG = Illumina TruSeq Small RNA 3' adapter;\n# change it for your kit (NEBNext: AGATCGGAAGAGCACACGTCT, QIAseq: AACTGTAGGCACCATCAAT)\nfastp \\\n  -i ${S.r1} \\\n  -o ${OUT}_trimmed.fastq.gz \\\n  --adapter_sequence ${AD} \\\n  --length_required 18 \\\n  --length_limit 40 \\\n  --thread ${T} \\\n  --html ${OUT}_fastp.html \\\n  --json ${OUT}_fastp.json\n\n# Alternative: cutadapt, discarding reads with no adapter (likely not small RNA)\n# cutadapt -a ${AD} --discard-untrimmed -m 18 -M 30 \\\n#   -j ${T} -o ${OUT}_trimmed.fastq.gz ${S.r1}\n\n# Align the trimmed reads (${OUT}_trimmed.fastq.gz), not the raw FASTQ`;
+  }
+
+  // Bisulfite — Trim Galore (handles the RRBS MspI end-repair artefact)
+  if (S.tech === 'bisulfite') {
+    const rrbs = S.bsProtocol === 'rrbs';
+    const flags = [S.paired && '--paired', rrbs && '--rrbs', rrbs && S.bsLib === 'non_directional' && '--non_directional']
+      .filter(Boolean).map(f => ` \\\n  ${f}`).join('');
+    const TD = `${OUT}_trimmed`;
+    const trimmed = S.paired
+      ? `${TD}/${tgName(S.r1, '_val_1')} ${TD}/${tgName(S.r2, '_val_2')}`
+      : `${TD}/${tgName(S.r1, '_trimmed')}`;
+    let c = `# Trim Galore — adapter + quality trimming for bisulfite reads\n`;
+    c += rrbs
+      ? `# --rrbs also removes the MspI end-repair artefact (2 bp from the 3' end of R1/SE, 2 bp from the 5' end of R2)\n`
+      : `# WGBS / EM-seq: no --rrbs (that is only for MspI-digested libraries)\n`;
+    c += `trim_galore${flags} \\\n  --cores ${bsPar(4)} \\\n  --fastqc \\\n  -o ${TD} \\\n  ${S.paired ? `${S.r1} ${S.r2}` : S.r1}`;
+    if (S.bsLib === 'pbat') c += `\n\n# PBAT: also remove the random-priming bias from the 5' ends (6N or 9N oligos), e.g.\n#   --clip_R1 9 --clip_R2 9  — confirm with the M-bias plot`;
+    c += `\n\n# Align the trimmed reads instead of the raw files:\n#   ${trimmed}`;
+    return c;
   }
 
   // Illumina short reads — fastp (recommended: trim + QC in one pass)
@@ -2410,6 +2612,60 @@ function buildAlignCmd() {
       lines.push(pipe(`bowtie2 ${preset} -p ${T}${vf('bowtie2')} -x ${S.refIdx}${rgfml('bowtie2')} \\\n  ${inArg}`));
       break;
     }
+
+    case 'bismark': {
+      const rrbs   = S.bsProtocol === 'rrbs';
+      const libOpt = S.bsLib === 'non_directional' ? ' \\\n  --non_directional' : S.bsLib === 'pbat' ? ' \\\n  --pbat' : '';
+      // each instance runs Bismark + 2 (directional) or 4 (non-directional) Bowtie 2 threads + samtools/gzip
+      const par    = bsPar(S.bsLib === 'non_directional' ? 7 : 5);
+      const inArg  = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : R1;
+      const stem   = S.paired ? `${OUT}_pe` : OUT;   // Bismark's --basename naming
+      lines.push(`# Bismark writes ${stem}.bam (unsorted) plus a mapping report`);
+      lines.push(`bismark \\\n  --genome ${S.bismarkGenome}${libOpt} \\\n  --parallel ${par}${rgfml('bismark')}${vfml('bismark')} \\\n  --basename ${OUT} \\\n  ${inArg}`);
+
+      const post = [];
+      let cur = `${stem}.bam`;
+      if (S.markDups && !rrbs) {
+        post.push(`deduplicate_bismark ${S.paired ? '-p' : '-s'} --bam ${cur}`);
+        cur = `${stem}.deduplicated.bam`;
+      } else if (S.markDups && rrbs) {
+        post.push('# RRBS: deduplication skipped — MspI fragments share start positions by design');
+      }
+      if (S.bsExtract) {
+        const ign = S.paired && !rrbs ? ' \\\n  --ignore_r2 2' : '';
+        post.push(`bismark_methylation_extractor \\\n  ${S.paired ? '--paired-end' : '--single-end'} \\\n  --gzip --bedGraph --comprehensive${ign} \\\n  --parallel ${bsPar(3)} \\\n  ${cur}`);
+        post.push(`# HTML report from the mapping, dedup, splitting and M-bias reports in this directory\nbismark2report`);
+      }
+      const sorted = `${cur.replace(/\.bam$/, '')}.sorted.${EXT}`;
+      if (S.sortBam) {
+        post.push(`${CRAM
+          ? `samtools sort -@ ${T} -O cram --reference ${REF} -o ${sorted}`
+          : `samtools sort -@ ${T} -o ${sorted}`} ${cur}`);
+        post.push(`samtools index -@ ${T} ${sorted}`);
+      }
+      const qcIn   = S.sortBam ? sorted : cur;
+      const refOpt = S.sortBam && CRAM ? ` --reference ${REF}` : '';
+      if (S.flagstat) post.push(`samtools flagstat -@ ${T} ${qcIn} > ${OUT}.flagstat.txt`);
+      if (S.samStats) post.push(`samtools stats -@ ${T}${refOpt} ${qcIn} > ${OUT}.stats.txt`);
+      if (S.mosdepth) {
+        if (!S.sortBam) {
+          post.push('# WARNING: mosdepth requires a coordinate-sorted, indexed BAM/CRAM — enable "Sort + index a copy" above');
+        } else {
+          const by = (S.mosdepthBed || '').trim();
+          post.push(`mosdepth -t ${T} -n --fast-mode${by ? ` \\\n  --by ${by}` : ''}${CRAM ? ` \\\n  --fasta ${REF}` : ''} \\\n  ${OUT} ${sorted}`);
+        }
+      }
+      if (post.length) {
+        lines.push('');
+        lines.push('# Post-processing');
+        lines.push(...post);
+      }
+      break;
+    }
+
+    case 'bwa-meth':
+      lines.push(pipe(`bwameth.py \\\n  --threads ${T} \\\n  --reference ${REF}${rgfml('bwa-meth')}${vfml('bwa-meth')} \\\n  ${reads}`));
+      break;
 
     case 'minimap2-pb':
       lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
@@ -2635,8 +2891,9 @@ function buildAlignCmd() {
       }
     }
 
-    // mosdepth needs an index, so index automatically when it is requested
-    if (S.indexBam || (S.mosdepth && S.sortBam)) {
+    // mosdepth and MethylDackel need an index, so index automatically when they are requested
+    const methDackel = al === 'bwa-meth' && S.bsExtract;
+    if (S.indexBam || ((S.mosdepth || methDackel) && S.sortBam)) {
       if (pbmm2Indexed()) postLines.push(`# ${finalAln}.bai was already written by pbmm2 --sort`);
       else postLines.push(`samtools index -@ ${T} ${finalAln}`);
     }
@@ -2659,6 +2916,18 @@ function buildAlignCmd() {
       }
     }
 
+    // bwa-meth: methylation calling with MethylDackel (sorted + indexed input, .fai reference)
+    if (methDackel) {
+      if (!S.sortBam) {
+        postLines.push('# WARNING: MethylDackel requires a coordinate-sorted, indexed BAM/CRAM — enable "Sort BAM" above');
+      } else {
+        const keep = S.bsProtocol === 'rrbs' ? ' --keepDupes' : '';
+        postLines.push(`# M-bias plots (${OUT}_OT.svg, _OB.svg); suggests --OT/--OB trimming bounds for extract`);
+        postLines.push(`MethylDackel mbias -@ ${T}${keep} ${REF} ${finalAln} ${OUT}`);
+        postLines.push(`MethylDackel extract -@ ${T} --mergeContext${keep} \\\n  -o ${OUT} \\\n  ${REF} ${finalAln}`);
+      }
+    }
+
     if (postLines.length) {
       lines.push('');
       lines.push('# Post-processing');
@@ -2673,7 +2942,7 @@ function buildAlignCmd() {
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
 // Longer names must precede their prefixes (bowtie2-build > bowtie2 > bowtie-build > bowtie, dragen-os > dragen)
-const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen-os','dragen','winnowmap','meryl','strobealign','bowtie-build','bowtie','cutadapt','pbmm2','simpleaf','kb'];
+const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen-os','dragen','winnowmap','meryl','strobealign','bowtie-build','bowtie','cutadapt','pbmm2','simpleaf','kb','bismark_genome_preparation','bismark_methylation_extractor','bismark2report','deduplicate_bismark','bismark','bwameth.py','MethylDackel'];
 
 function highlight(raw) {
   const e = raw
@@ -2685,7 +2954,8 @@ function highlight(raw) {
     // comments (must come first)
     .replace(/(#[^\n]+)/g, '<span class="c-comment">$1</span>')
     // tool names at line start
-    .replace(new RegExp(`^(${TOOLS.join('|')})`, 'gm'), '<span class="c-tool">$1</span>')
+    // (lookahead stops a short name such as "bwa" from matching the start of "bwameth.py")
+    .replace(new RegExp(`^(${TOOLS.join('|')})(?![\\w.-])`, 'gm'), '<span class="c-tool">$1</span>')
     // flags
     .replace(/(\s)(--?[a-zA-Z][a-zA-Z0-9-]*)/g, '$1<span class="c-flag">$2</span>')
     // backslash continuation & pipes
@@ -2745,7 +3015,7 @@ function buildNotes() {
   // Sort required for markdup
   if (S.markDups && !S.sortBam && al === 'dragen') {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> DRAGEN duplicate marking requires <code>--enable-sort true</code>; it has been turned off in the command. Enable sorting above.' });
-  } else if (S.markDups && !S.sortBam && !info.quantOnly && !info.graphOutput) {
+  } else if (S.markDups && !S.sortBam && !info.quantOnly && !info.graphOutput && al !== 'bismark') {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> <code>samtools markdup</code> requires coordinate-sorted input. Enable "Sort BAM by coordinate" above.' });
   }
 
@@ -2852,6 +3122,36 @@ function buildNotes() {
     }
   }
 
+  // Bisulfite / methylation
+  if (al === 'bismark' || al === 'bwa-meth') {
+    const rrbs = S.bsProtocol === 'rrbs';
+    if (rrbs && S.markDups) {
+      notes.push({ type: 'warn', text: al === 'bismark'
+        ? '<strong>No deduplication for RRBS:</strong> MspI-digested fragments all start at restriction sites, so identical start positions are expected; <code>deduplicate_bismark</code> has been left out of the command.'
+        : '<strong>No deduplication for RRBS:</strong> MspI-digested fragments all start at restriction sites, so identical start positions are expected. Untick "Mark PCR duplicates"; MethylDackel is run with <code>--keepDupes</code> so marked reads are still counted.' });
+    } else if (!rrbs && !S.markDups) {
+      notes.push({ type: 'info', text: `<strong>Deduplicate WGBS:</strong> PCR duplicates inflate methylation calls at the same molecule; enable ${al === 'bismark' ? '"Deduplicate (deduplicate_bismark)"' : '"Mark PCR duplicates" (MethylDackel then ignores flagged reads)'} for whole-genome libraries.` });
+    }
+    if (al === 'bwa-meth' && S.bsLib !== 'directional') {
+      notes.push({ type: 'warn', text: `<strong>bwa-meth is directional-only:</strong> it assumes R1 comes from the original top/bottom strands and has no ${S.bsLib === 'pbat' ? 'PBAT' : 'non-directional'} mode. Use Bismark with <code>--${S.bsLib}</code> for this library.` });
+    }
+    if (al === 'bwa-meth' && S.bsExtract && !S.sortBam) {
+      notes.push({ type: 'warn', text: '<strong>MethylDackel needs a sorted, indexed file:</strong> the extraction step is commented out until "Sort BAM" is enabled.' });
+    }
+    if (al === 'bismark' && S.bsExtract && S.paired && !rrbs) {
+      notes.push({ type: 'info', text: '<strong>--ignore_r2 2:</strong> the first two bases of Read 2 carry the end-repair fill-in from library prep (unmethylated by construction), so the Bismark guide recommends ignoring them for paired-end WGBS. Check the M-bias plot and adjust.' });
+    }
+    if (al === 'bwa-meth' && S.bsExtract && S.sortBam) {
+      notes.push({ type: 'info', text: '<strong>Check M-bias first:</strong> <code>MethylDackel mbias</code> prints suggested <code>--OT</code>/<code>--OB</code> inclusion bounds; add them to <code>MethylDackel extract</code> to drop biased read ends.' });
+    }
+    if (S.bsLib === 'pbat') {
+      notes.push({ type: 'info', text: '<strong>PBAT trimming:</strong> random-primed post-bisulfite libraries show errors and methylation bias in the first 6–9 bp of each read; clip them in Trim Galore (<code>--clip_R1</code>/<code>--clip_R2</code>) as shown in the QC tab.' });
+    }
+    if (rrbs) {
+      notes.push({ type: 'info', text: '<strong>RRBS trimming:</strong> run Trim Galore with <code>--rrbs</code> (QC tab) before alignment to remove the end-repair artefact next to MspI sites.' });
+    }
+  }
+
   const bamPost = !info.quantOnly && !info.graphOutput && !info.builtinPost;
 
   // indexBam without sorting
@@ -2869,7 +3169,7 @@ function buildNotes() {
   }
 
   // CRAM output
-  if (S.outFmt === 'cram' && !info.quantOnly && !info.graphOutput) {
+  if (S.outFmt === 'cram' && !info.quantOnly && !info.graphOutput && !(al === 'bismark' && !S.sortBam)) {
     notes.push({ type: 'warn', text: '<strong>CRAM needs the exact reference:</strong> CRAM stores reads as differences from the reference, so the <em>identical</em> FASTA (same contigs and sequence, matched by the @SQ <code>M5</code> checksums) is needed to decode it later. Archive the FASTA with the CRAM, or point <code>REF_PATH</code>/<code>REF_CACHE</code> at it; most tools take it via <code>--reference</code>/<code>-T</code> (mosdepth: <code>--fasta</code>).' + (bamPost && S.flagstat ? ' <code>samtools flagstat</code> has no <code>--reference</code> option and locates the FASTA through the header\'s <code>UR</code>/<code>M5</code> tags, so keep it at the same path or set <code>REF_PATH</code>.' : '') });
   }
 
@@ -3138,7 +3438,7 @@ function buildDiagram() {
       cur = 'MDBAM';
       curFile = `${OUT}.markdup.${EXT}`;
     }
-    const indexed = (S.indexBam || (S.mosdepth && S.sortBam)) && !pbmm2Indexed();
+    const indexed = (S.indexBam || ((S.mosdepth || (al === 'bwa-meth' && S.bsExtract)) && S.sortBam)) && !pbmm2Indexed();
     if (indexed) {
       s += `    SIDXB["samtools index"]:::tool\n    BAIN(["${curFile}.${IEXT}"]):::out\n    ${cur} --> SIDXB --> BAIN\n`;
     }
@@ -3226,6 +3526,57 @@ ${srIn}
 ${bamOut('BT2')}${post('BAM')}
     REF --> BIDX --> IDXF --> BT2
     ${srArr} --> BT2`;
+
+    case 'bismark': {
+      const GEN  = dl(S.bismarkGenome || 'bismark_genome');
+      const rrbs = S.bsProtocol === 'rrbs';
+      const stem = S.paired ? `${OUT}_pe` : OUT;
+      const lib  = S.bsLib === 'non_directional' ? ' --non_directional' : S.bsLib === 'pbat' ? ' --pbat' : '';
+      let tail = `    BAM(["${stem}.bam<br/>unsorted"]):::out\n    BSM --> BAM\n`;
+      let cur = 'BAM', curFile = `${stem}.bam`;
+      if (S.markDups && !rrbs) {
+        tail += `    DDP["deduplicate_bismark"]:::tool\n    DDB(["${stem}.deduplicated.bam"]):::out\n    ${cur} --> DDP --> DDB\n`;
+        cur = 'DDB'; curFile = `${stem}.deduplicated.bam`;
+      }
+      const base = curFile.replace(/\.bam$/, '');
+      if (S.bsExtract) {
+        tail += `    MEX["bismark_methylation_extractor<br/>--bedGraph --comprehensive"]:::tool\n    COV(["${base}.bismark.cov.gz<br/>${base}.bedGraph.gz<br/>CpG/CHG/CHH_context_*.txt.gz"]):::out\n    ${cur} --> MEX --> COV\n`;
+        tail += `    B2R["bismark2report"]:::tool\n    HTML(["HTML report"]):::out\n    MEX -.-> B2R --> HTML\n`;
+      }
+      if (S.sortBam) {
+        const ext = S.outFmt === 'cram' ? 'cram' : 'bam';
+        tail += `    SORT["samtools sort + index"]:::tool\n    SBAM(["${base}.sorted.${ext}"]):::out\n    ${cur} --> SORT --> SBAM\n`;
+        if (S.mosdepth) tail += `    MOSD["mosdepth"]:::tool\n    MOSO(["${OUT}.mosdepth.summary.txt"]):::out\n    SBAM --> MOSD --> MOSO\n`;
+      }
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    GPREP["bismark_genome_preparation"]:::tool
+    GIDX(["${GEN}/Bisulfite_Genome/<br/>CT + GA Bowtie 2 indexes"]):::idx
+    BSM["bismark${lib}<br/>--parallel ${bsPar(S.bsLib === 'non_directional' ? 7 : 5)}"]:::tool
+${tail}
+    REF -->|copy into ${GEN}| GPREP --> GIDX --> BSM
+    ${srArr} --> BSM`;
+    }
+
+    case 'bwa-meth': {
+      const fin = S.markDups && S.sortBam ? 'MDBAM' : 'BAM';
+      let meth = '';
+      if (S.bsExtract && S.sortBam) {
+        meth = `    MDK["MethylDackel mbias + extract"]:::tool\n    BG(["${OUT}_CpG.bedGraph<br/>${OUT}_OT.svg  _OB.svg"]):::out\n    ${fin} --> MDK --> BG\n    BAIN -.-> MDK\n    REF -.->|.fai| MDK\n`;
+      } else if (S.bsExtract) {
+        meth = `    MDWARN["⚠ Sort required for MethylDackel"]:::tool\n    ${fin} -.-> MDWARN\n`;
+      }
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    BMIDX["bwameth.py ${S.bwamethIdx === 'mem2' ? 'index-mem2' : 'index'}"]:::tool
+    IDXF(["${REF}.bwameth.c2t<br/>+ ${S.bwamethIdx === 'mem2' ? 'BWA-MEM2' : 'BWA'} index"]):::idx
+    BWM["bwameth.py --threads ${T}"]:::tool
+${bamOut('BWM')}${post('BAM')}${meth}
+    REF --> BMIDX --> IDXF --> BWM
+    ${srArr} --> BWM`;
+    }
 
     case 'minimap2-pb':
       return `flowchart LR\n${C}

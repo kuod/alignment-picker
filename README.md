@@ -16,6 +16,8 @@ Choose your experiment type, sequencing platform, and aligner — get a ready-to
 | BWA-MEM | DNA short + long reads |
 | Strobealign | DNA short reads (fast, on-the-fly indexing) |
 | Bowtie2 | DNA short reads |
+| Bismark | DNA methylation — bisulfite / EM-seq (WGBS, RRBS, PBAT), Illumina |
+| bwa-meth | DNA methylation — bisulfite / EM-seq (directional WGBS, RRBS), Illumina |
 | Minimap2 | DNA long reads (PacBio, ONT) |
 | pbmm2 | PacBio long reads — DNA (HiFi, CLR) and Iso-Seq RNA; reads unaligned BAM natively |
 | STAR | RNA-seq short reads; small RNA / miRNA-seq (ENCODE settings) |
@@ -45,6 +47,8 @@ For BAM-producing aligners, step 5 adds optional coordinate sorting, indexing, d
 
 The *Single-cell (10x / droplet)* RNA technology builds STARsolo, `simpleaf` (alevin-fry) or `kb` (kallisto | bustools) commands for a chosen 10x chemistry, barcode whitelist and an optional single-nucleus mode (STARsolo `GeneFull`, alevin-fry USA counts, kb `--workflow nac`). R1 is the barcode + UMI read and R2 the cDNA read. Output is a cell × gene count matrix, so BAM post-processing is skipped (STARsolo can optionally also write a CB/UB-tagged BAM), and the QC step runs FastQC only — trimming barcode reads breaks cell/UMI assignment.
 
+For bisulfite / EM-seq data (DNA → "Bisulfite / EM-seq"), choose WGBS vs RRBS and the library type (directional, non-directional, PBAT). The QC tab switches to Trim Galore (`--rrbs` for RRBS), and step 5 adds deduplication (WGBS only) and methylation extraction: `deduplicate_bismark` + `bismark_methylation_extractor` for Bismark, `samtools markdup` + MethylDackel for bwa-meth.
+
 ## Citations
 
 If you use this tool to build a pipeline, please cite the underlying aligner:
@@ -56,6 +60,9 @@ If you use this tool to build a pipeline, please cite the underlying aligner:
 | Strobealign | Sahlin K. *Genome Biology* 23:260 (2022). [doi:10.1186/s13059-022-02831-7](https://doi.org/10.1186/s13059-022-02831-7); v0.17.0+: Tolstoganov et al. *Genome Biology* 27:118 (2026). [doi:10.1186/s13059-026-04017-x](https://doi.org/10.1186/s13059-026-04017-x) |
 | Bowtie2 | Langmead & Salzberg. *Nature Methods* 9, 357–359 (2012). [doi:10.1038/nmeth.1923](https://doi.org/10.1038/nmeth.1923) |
 | Bowtie | Langmead et al. *Genome Biology* 10:R25 (2009). [doi:10.1186/gb-2009-10-3-r25](https://doi.org/10.1186/gb-2009-10-3-r25) |
+| Bismark | Krueger & Andrews. *Bioinformatics* 27(11):1571–1572 (2011). [doi:10.1093/bioinformatics/btr167](https://doi.org/10.1093/bioinformatics/btr167) |
+| bwa-meth | Pedersen et al. arXiv:1401.1129 (2014). [arxiv:1401.1129](https://arxiv.org/abs/1401.1129) |
+| MethylDackel | Ryan DP. Software. [github.com/dpryan79/MethylDackel](https://github.com/dpryan79/MethylDackel) |
 | Minimap2 | Li H. *Bioinformatics* 34(18):3094–3100 (2018). [doi:10.1093/bioinformatics/bty191](https://doi.org/10.1093/bioinformatics/bty191) |
 | pbmm2 | No paper — cite the repository, [github.com/PacificBiosciences/pbmm2](https://github.com/PacificBiosciences/pbmm2), together with Minimap2 (above), which it wraps |
 | STAR | Dobin et al. *Bioinformatics* 29(1):15–21 (2013). [doi:10.1093/bioinformatics/bts635](https://doi.org/10.1093/bioinformatics/bts635) |
