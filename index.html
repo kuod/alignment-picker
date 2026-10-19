@@ -1795,7 +1795,7 @@ function buildAlignCmd() {
     }
 
     case 'graphaligner':
-      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf${S.verboseMode && S.vOpts.preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
+      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf${S.verboseMode && vOptsFor('graphaligner').preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
       lines.push('');
       lines.push(`# To convert GAF → BAM, build a GBZ from the SAME GFA used above,`);
       lines.push(`# then surject the GAF onto the graph's reference paths:`);
