@@ -604,6 +604,14 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">mosdepth</td>
+            <td class="cite-ref">
+              Pedersen BS, Quinlan AR. <em>Mosdepth: quick coverage calculation for genomes and exomes.</em>
+              <span class="cite-journal">Bioinformatics</span> 34(5):867–868, 2018.
+              <a href="https://doi.org/10.1093/bioinformatics/btx699" target="_blank">doi:10.1093/bioinformatics/btx699</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">DRAGEN</td>
             <td class="cite-ref">
               Behera S, et al. <em>Comprehensive genome analysis and variant detection at scale using DRAGEN.</em>
@@ -661,6 +669,11 @@ const S = {
   sortBam:       true,
   indexBam:      false,
   markDups:      false,
+  outFmt:        'bam',   // 'bam' | 'cram'
+  flagstat:      false,
+  samStats:      false,
+  mosdepth:      false,
+  mosdepthBed:   '',
   bt2Preset:     '--sensitive',
   starTwoPass:   false,
   starQuantMode: false,
@@ -1614,8 +1627,21 @@ function renderPostProc() {
     return;
   }
 
+  const cram = S.outFmt === 'cram';
+  const fmtSel = `<div class="param-grid" style="margin-bottom:1rem;">
+      <div class="field"><label>Output format</label>
+        <select onchange="S.outFmt=this.value;renderPostProc();refresh()">
+          <option value="bam"  ${!cram?'selected':''}>BAM (.bam + .bai)</option>
+          <option value="cram" ${cram ?'selected':''}>CRAM (.cram + .crai) — ~40–60% smaller, needs reference</option>
+        </select>
+      </div>
+      ${cram && ['bowtie2','hisat2'].includes(S.aligner)
+        ? field('Reference FASTA <span style="font-weight:400;color:var(--muted)">(for CRAM encoding)</span>', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`)
+        : ''}
+    </div>`;
+
   if (info.builtinPost) {
-    el.innerHTML = `<div class="check-group">
+    el.innerHTML = fmtSel + `<div class="check-group">
     ${check('sortBam', 'Sort BAM by coordinate (--enable-sort)', 'Done in-line by DRAGEN; a .bai index is written alongside the sorted BAM')}
     ${check('markDups', 'Mark duplicates (--enable-duplicate-marking)', 'DRAGEN\'s built-in duplicate marking; requires sorting')}
     ${check('dragenVC', 'Call small variants (--enable-variant-caller)', 'Runs the DRAGEN germline SNV/indel caller in the same pass and writes a VCF')}
@@ -1631,11 +1657,23 @@ function renderPostProc() {
     return;
   }
 
-  el.innerHTML = `<div class="check-group">
+  el.innerHTML = fmtSel + `<div class="check-group">
     ${check('sortBam', 'Sort BAM by coordinate (samtools sort)', 'Required by most downstream tools: GATK, featureCounts, HTSeq, IGV')}
     ${check('indexBam', 'Index BAM (samtools index)', 'Creates .bai index for random-access queries; required for IGV, most variant callers')}
     ${check('markDups', 'Mark PCR duplicates (samtools markdup)', 'Flags optical/PCR duplicates — recommended for WGS/WES; generally NOT for ChIP-seq or ATAC-seq')}
-  </div>`;
+  </div>
+  <div class="list-head" style="color:var(--muted);margin:1.1rem 0 0.4rem;">Alignment QC</div>
+  <div class="check-group">
+    ${check('flagstat', 'Mapping summary (samtools flagstat)', `Mapped %, properly paired %, duplicates → &lt;prefix&gt;.flagstat.txt; parsed by MultiQC`)}
+    ${check('samStats', 'Detailed stats (samtools stats)', `Insert size, error rate, base quality, coverage histograms → &lt;prefix&gt;.stats.txt; parsed by MultiQC`)}
+    <label class="check-item">
+      <input type="checkbox" ${S.mosdepth?'checked':''} onchange="S.mosdepth=this.checked;renderPostProc();refresh()">
+      <div><div class="check-label">Coverage depth (mosdepth)</div><div class="check-desc">Fast per-chromosome / per-target mean depth and cumulative coverage distribution; needs a sorted, indexed file (index is added automatically)</div></div>
+    </label>
+  </div>
+  ${S.mosdepth ? `<div class="param-grid" style="margin-top:0.75rem;">
+    ${field('Target regions BED <span style="font-weight:400;color:var(--muted)">(optional, --by — e.g. WES capture)</span>', `<input type="text" value="${esc(S.mosdepthBed)}" placeholder="targets.bed" oninput="S.mosdepthBed=this.value;refresh()">`)}
+  </div>` : ''}`;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1701,8 +1739,14 @@ function buildAlignCmd() {
   let lines = [];
 
   /* ── helpers ── */
-  const samSort = `samtools sort -@ ${T} -o ${OUT}.bam`;
-  const samView = `samtools view -@ ${T} -bS -o ${OUT}.bam`;
+  const CRAM    = S.outFmt === 'cram';
+  const EXT     = CRAM ? 'cram' : 'bam';
+  const samSort = CRAM
+    ? `samtools sort -@ ${T} -O cram --reference ${REF} -o ${OUT}.cram`
+    : `samtools sort -@ ${T} -o ${OUT}.bam`;
+  const samView = CRAM
+    ? `samtools view -@ ${T} -C -T ${REF} -o ${OUT}.cram`
+    : `samtools view -@ ${T} -bS -o ${OUT}.bam`;
   const pipe    = (cmd) => S.sortBam
     ? `${cmd} \\\n  | ${samSort}`
     : `${cmd} \\\n  | ${samView}`;
@@ -1719,7 +1763,7 @@ function buildAlignCmd() {
       const sort  = S.sortBam ? 'true' : 'false';
       const dedup = S.markDups && S.sortBam ? 'true' : 'false';
       lines.push(`mkdir -p ${OUT}_dragen`);
-      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg} \\\n  --RGID ${SM} \\\n  --RGSM ${SM} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format BAM \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
+      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg} \\\n  --RGID ${SM} \\\n  --RGSM ${SM} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format ${S.outFmt === 'cram' ? 'CRAM' : 'BAM'} \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
       break;
     }
 
@@ -1810,19 +1854,53 @@ function buildAlignCmd() {
   /* ── Post-processing ── */
   const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput || ALIGNERS[al]?.builtinPost;
   if (!isQuant) {
-    const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
+    const refOpt   = CRAM ? ` --reference ${REF}` : '';
     const postLines = [];
+
+    // STAR writes its own BAM inside the output directory; every other
+    // aligner streams into samtools and writes ${OUT}.${EXT} directly.
+    let aligned = `${OUT}.${EXT}`;
+    if (al === 'star') {
+      const starBam = `${OUT}/Aligned.${S.sortBam ? 'sortedByCoord.' : ''}out.bam`;
+      if (CRAM) {
+        postLines.push(`samtools view -@ ${T} -C -T ${REF} -o ${OUT}.cram ${starBam}`);
+      } else {
+        aligned = starBam;
+      }
+    }
+
+    const doMarkDup = S.markDups && S.sortBam;
+    const finalAln  = doMarkDup ? `${OUT}.markdup.${EXT}` : aligned;
 
     if (S.markDups) {
       if (!S.sortBam) {
         postLines.push('# WARNING: markdup requires a coordinate-sorted BAM — enable "Sort BAM" above');
       } else {
-        postLines.push(`samtools markdup -@ ${T} ${OUT}.bam ${OUT}.markdup.bam`);
+        postLines.push(`samtools markdup -@ ${T}${refOpt} ${aligned} ${finalAln}`);
       }
     }
 
-    if (S.indexBam) {
-      postLines.push(`samtools index -@ ${T} ${finalBam}`);
+    // mosdepth needs an index, so index automatically when it is requested
+    if (S.indexBam || (S.mosdepth && S.sortBam)) {
+      postLines.push(`samtools index -@ ${T} ${finalAln}`);
+    }
+
+    if (S.flagstat) {
+      postLines.push(`samtools flagstat -@ ${T} ${finalAln} > ${OUT}.flagstat.txt`);
+    }
+    if (S.samStats) {
+      postLines.push(`samtools stats -@ ${T}${refOpt} ${finalAln} > ${OUT}.stats.txt`);
+    }
+
+    if (S.mosdepth) {
+      if (!S.sortBam) {
+        postLines.push('# WARNING: mosdepth requires a coordinate-sorted, indexed BAM/CRAM — enable "Sort BAM" above');
+      } else {
+        const by    = (S.mosdepthBed || '').trim();
+        const byOpt = by ? ` \\\n  --by ${by}` : '';
+        const faOpt = CRAM ? ` \\\n  --fasta ${REF}` : '';
+        postLines.push(`mosdepth -t ${T} -n --fast-mode${byOpt}${faOpt} \\\n  ${OUT} ${finalAln}`);
+      }
     }
 
     if (postLines.length) {
@@ -1838,7 +1916,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
+const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
 
 function highlight(raw) {
   const e = raw
@@ -1909,9 +1987,25 @@ function buildNotes() {
     notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
   }
 
-  // Long reads + indexBam
-  if (['minimap2-pb','minimap2-ont','minimap2-rna'].includes(al) && S.indexBam && !S.sortBam) {
+  const bamPost = !info.quantOnly && !info.graphOutput && !info.builtinPost;
+
+  // indexBam without sorting
+  if (bamPost && S.indexBam && !S.sortBam) {
     notes.push({ type: 'warn', text: '<strong>Index requires sorted BAM:</strong> <code>samtools index</code> requires a coordinate-sorted BAM. Enable "Sort BAM" above.' });
+  }
+
+  // mosdepth needs a sorted + indexed file
+  if (bamPost && S.mosdepth) {
+    if (!S.sortBam) {
+      notes.push({ type: 'warn', text: '<strong>mosdepth needs a sorted, indexed file:</strong> it exits with "alignment file must be indexed" otherwise, so the mosdepth step is commented out. Enable "Sort BAM" above.' });
+    } else if (!S.indexBam) {
+      notes.push({ type: 'info', text: '<strong>Index added for mosdepth:</strong> mosdepth requires a <code>.bai</code>/<code>.crai</code> index, so a <code>samtools index</code> step was added automatically.' });
+    }
+  }
+
+  // CRAM output
+  if (S.outFmt === 'cram' && !info.quantOnly && !info.graphOutput) {
+    notes.push({ type: 'warn', text: '<strong>CRAM needs the exact reference:</strong> CRAM stores reads as differences from the reference, so the <em>identical</em> FASTA (same contigs and sequence, matched by the @SQ <code>M5</code> checksums) is needed to decode it later. Archive the FASTA with the CRAM, or point <code>REF_PATH</code>/<code>REF_CACHE</code> at it; most tools take it via <code>--reference</code>/<code>-T</code> (mosdepth: <code>--fasta</code>).' + (bamPost && S.flagstat ? ' <code>samtools flagstat</code> has no <code>--reference</code> option and locates the FASTA through the header\'s <code>UR</code>/<code>M5</code> tags, so keep it at the same path or set <code>REF_PATH</code>.' : '') });
   }
 
   return notes;
@@ -2096,28 +2190,58 @@ function buildDiagram() {
 
   const isQuant = ALIGNERS[al]?.quantOnly;
 
-  // Optional post-processing nodes+edges appended after BAM output
+  const CRAM = S.outFmt === 'cram';
+  const EXT  = CRAM ? 'cram' : 'bam';
+  const IEXT = CRAM ? 'crai' : 'bai';
+
+  // Optional post-processing nodes+edges appended after BAM/CRAM output
   function post(from) {
     if (isQuant) return '';
     let s = '', cur = from;
+    let curFile = from === 'BAMO' ? `Aligned.${S.sortBam ? 'sortedByCoord.' : ''}out.bam` : `${OUT}.${EXT}`;
+    // STAR writes BAM itself; CRAM needs an explicit conversion
+    if (al === 'star' && CRAM) {
+      s += `    CONV["samtools view -C"]:::tool\n    CRAMO(["${OUT}.cram"]):::out\n    ${cur} --> CONV --> CRAMO\n    REF -.->|reference| CONV\n`;
+      cur = 'CRAMO';
+      curFile = `${OUT}.cram`;
+    }
     if (S.markDups && !S.sortBam) {
-      return `    WARN["⚠ Sort BAM required for markdup"]:::tool\n    ${from} -.-> WARN\n`;
+      s += `    WARN["⚠ Sort BAM required for markdup"]:::tool\n    ${cur} -.-> WARN\n`;
     }
     if (S.markDups && S.sortBam) {
-      s += `    MDUP["samtools markdup"]:::tool\n    MDBAM(["${OUT}.markdup.bam"]):::out\n    ${cur} --> MDUP --> MDBAM\n`;
+      s += `    MDUP["samtools markdup"]:::tool\n    MDBAM(["${OUT}.markdup.${EXT}"]):::out\n    ${cur} --> MDUP --> MDBAM\n`;
       cur = 'MDBAM';
+      curFile = `${OUT}.markdup.${EXT}`;
     }
-    if (S.indexBam) {
-      const bai = cur === 'MDBAM' ? `${OUT}.markdup.bam.bai` : `${OUT}.bam.bai`;
-      s += `    SIDXB["samtools index"]:::tool\n    BAIN(["${bai}"]):::out\n    ${cur} --> SIDXB --> BAIN\n`;
+    const indexed = S.indexBam || (S.mosdepth && S.sortBam);
+    if (indexed) {
+      s += `    SIDXB["samtools index"]:::tool\n    BAIN(["${curFile}.${IEXT}"]):::out\n    ${cur} --> SIDXB --> BAIN\n`;
+    }
+    if (S.flagstat) {
+      s += `    FSTAT["samtools flagstat"]:::tool\n    FSTATO(["${OUT}.flagstat.txt"]):::out\n    ${cur} --> FSTAT --> FSTATO\n`;
+    }
+    if (S.samStats) {
+      s += `    SSTAT["samtools stats"]:::tool\n    SSTATO(["${OUT}.stats.txt"]):::out\n    ${cur} --> SSTAT --> SSTATO\n`;
+    }
+    if (S.mosdepth) {
+      if (!S.sortBam) {
+        s += `    MWARN["⚠ Sort required for mosdepth"]:::tool\n    ${cur} -.-> MWARN\n`;
+      } else {
+        const bed = dl((S.mosdepthBed || '').trim());
+        s += `    MOSD["mosdepth${bed ? ' --by' : ''}"]:::tool\n    MOSO(["${OUT}.mosdepth.summary.txt${bed ? `<br/>${OUT}.regions.bed.gz` : ''}"]):::out\n    ${cur} --> MOSD --> MOSO\n    BAIN -.-> MOSD\n`;
+        if (bed) s += `    TBED(["${bed}"]):::file\n    TBED -.-> MOSD\n`;
+      }
     }
     return s;
   }
 
-  // Sort pipe or plain BAM output
+  // Sort pipe or plain BAM/CRAM output
   function bamOut(from) {
-    return S.sortBam
-      ? `    SORT["samtools sort"]:::tool\n    BAM(["${OUT}.bam"]):::out\n    ${from} --> SORT --> BAM\n`
+    if (S.sortBam) {
+      return `    SORT["samtools sort${CRAM ? ' -O cram' : ''}"]:::tool\n    BAM(["${OUT}.${EXT}"]):::out\n    ${from} --> SORT --> BAM\n${CRAM ? '    REF -.->|reference| SORT\n' : ''}`;
+    }
+    return CRAM
+      ? `    VIEW["samtools view -C"]:::tool\n    BAM(["${OUT}.cram"]):::out\n    ${from} --> VIEW --> BAM\n    REF -.->|reference| VIEW\n`
       : `    BAM(["${OUT}.bam"]):::out\n    ${from} --> BAM\n`;
   }
 
@@ -2192,7 +2316,7 @@ ${bamOut('MM2')}${post('BAM')}
     LR --> MM2`;
 
     case 'star': {
-      const coord = S.sortBam ? 'sortedByCoord' : 'unsorted';
+      const coord = S.sortBam ? 'sortedByCoord.' : '';
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
     GTF(["annotation.gtf"]):::file
@@ -2200,7 +2324,7 @@ ${srIn}
     SGEN["STAR genomeGenerate<br/>--runThreadN ${T}"]:::tool
     GDIR2(["${GDIR}/"]):::idx
     SALN["STAR align<br/>--runThreadN ${T}${S.starTwoPass ? '<br/>--twopassMode Basic' : ''}"]:::tool
-    BAMO(["${OUT}/<br/>Aligned.${coord}.bam${S.starQuantMode ? '<br/>ReadsPerGene.out.tab' : ''}"]):::out
+    BAMO(["${OUT}/<br/>Aligned.${coord}out.bam${S.starQuantMode ? '<br/>ReadsPerGene.out.tab' : ''}"]):::out
 ${post('BAMO')}
     REF --> SGEN
     GTF --> SGEN
@@ -2265,9 +2389,11 @@ ${bamOut('MM2')}${post('BAM')}
     case 'dragen': {
       const HT  = dl(S.dragenRefDir || 'dragen_hash_table');
       const ODIR = `${OUT}_dragen/${OUT}`;
+      const dExt = S.outFmt === 'cram' ? 'cram' : 'bam';
+      const dIdx = S.outFmt === 'cram' ? 'crai' : 'bai';
       let tail = S.sortBam
-        ? `    BAM(["${ODIR}.bam + .bai"]):::out\n    DRG --> BAM\n`
-        : `    BAM(["${ODIR}.bam"]):::out\n    DRG --> BAM\n`;
+        ? `    BAM(["${ODIR}.${dExt} + .${dIdx}"]):::out\n    DRG --> BAM\n`
+        : `    BAM(["${ODIR}.${dExt}"]):::out\n    DRG --> BAM\n`;
       if (S.dragenVC) tail += `    VCF(["${ODIR}.hard-filtered.vcf.gz"]):::out\n    DRG --> VCF\n`;
       const steps = ['map/align', S.sortBam && 'sort', S.markDups && S.sortBam && 'dedup', S.dragenVC && 'call'].filter(Boolean).join(' → ');
       return `flowchart LR\n${C}
