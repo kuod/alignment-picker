@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-file GitHub Pages app (`index.html`) that walks users through choosing a DNA or RNA-seq aligner and builds a copyable shell command in real time, with a live pros/cons analysis panel.
 
-No build step, no dependencies, no package manager. Open `index.html` directly in a browser to develop.
+No build step, no dependencies, no package manager (Mermaid is loaded from a pinned CDN URL with SRI and is optional: without it only the diagram is lost). Open `index.html` directly in a browser to develop.
+
+## Tests
+
+`node --test` (Node 20+, no install). `tests/harness.js` loads the inline script under a DOM stub; the tests check that every aligner/technology/option combination produces valid shell (`bash -n`), plus state restore, share-link, escaping and input-fallback regressions. Run them before committing.
 
 ## Architecture
 
@@ -21,16 +25,20 @@ Everything lives in `index.html` in three sections:
 1. `pick(field, val, btn)` — handles all three selection steps; calls the appropriate render functions and then `refresh()`
 2. `renderTech()` / `renderAligners()` — populate choice grids from `TECH_OPTIONS` / `ALIGNERS` filtered by current state
 3. `renderParams()` / `renderPostProc()` — build parameter input HTML dynamically from state; inputs use inline `oninput`/`onchange` to mutate `S` and call `refresh()`
-4. `buildCommand()` — pure function over `S`; returns a multi-line shell command string with `#` comments
-5. `highlight(raw)` — simple regex-based syntax coloring applied to the command string before injecting into `.cmd-body`
-6. `buildNotes()` — returns contextual warning/info notes based on the current state combination (e.g., markdup without sort, BWA-MEM for long reads)
-7. `refresh()` — calls `buildCommand()`, `highlight()`, `buildNotes()`, and updates both sidebar panels
+4. `buildQCCmd()` / `buildIndexCmd()` / `buildAlignCmd()` — one per sidebar tab (QC, Index, Align). Each is a thin wrapper that calls `_buildXCmd(effectiveState())`: the real builder takes the state as a parameter named `S` (shadowing the global) where blank paths and invalid thread counts have already fallen back to defaults. Returns a multi-line shell string with `#` comments. User values are shell-quoted with `shq()`: `effectiveState()` quotes the path fields once (the unquoted values stay in `S._raw`), and anything else user-typed (verbose-option values, whitelist) must go through `shq()` at the interpolation site.
+5. `highlight(raw)` — simple regex-based syntax coloring applied to the command string before injecting into `.cmd-body` (it HTML-escapes first)
+6. `buildNotes()` — returns contextual warning/info notes based on the current state combination (e.g., markdup without sort, BWA-MEM for long reads). Notes are injected as HTML, so escape user-controlled values with `esc()`.
+7. `refresh()` — rebuilds the three command panes, `buildNotes()` and the analysis panel, and persists state to localStorage and the URL hash (`encodeState`, base64 of UTF-8 JSON)
+
+State restored from the hash or localStorage goes through `sanitizeSaved()` (known keys, matching types only) and `migrateState()`; keep both in step when adding fields to `S`.
 
 ## Adding a new aligner
 
 1. Add an entry to the `ALIGNERS` object with: `label`, `tags`, `dna`/`rna` booleans, `quantOnly`, `techs` array (must match keys in `TECH_OPTIONS`), `desc`, `pros`, `cons`, `best`.
-2. Add a `case` in the `buildCommand()` switch that constructs the command lines array. Use the `pipe()` helper for commands that stream into samtools.
-3. Add the aligner ID to the `TOOLS` array in `highlight()` so the tool name gets amber syntax coloring.
+2. Add a `case` in the `_buildAlignCmd()` switch (and `_buildIndexCmd()` / `_buildQCCmd()` if needed) that constructs the command lines array. Use the `pipe()` helper for commands that stream into samtools, and `rgf()`/`rgfml()` for read groups (add the ID to `RG_VARIANT` or `RG_NONE`).
+3. Add the executable names to the `TOOLS` array (top level, above `highlight()`) so the tool name gets amber syntax coloring.
+4. Add any advanced flags to `VERBOSE_OPTS` and, if it should appear in the data-flow diagram, a case in `buildDiagram()`.
+5. Run `node --test`.
 
 ## Adding a new technology / platform
 

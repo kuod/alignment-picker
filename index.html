@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Alignment Picker — DNA &amp; RNA-seq</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js" integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2" crossorigin="anonymous"></script>
 <style>
 :root {
   --primary: #2563eb;
@@ -807,6 +807,31 @@ const S = {
   kbT2g:         't2g.txt',
 };
 
+/* ── POSIX shell quoting ──
+   Every user-supplied value that lands in a generated command goes through shq().
+   Plain safe tokens stay bare (readable output); anything else is single-quoted
+   with ' written as '\''. A leading ~/ is kept outside the quotes so tilde
+   expansion still works. Control characters (newline, CR, tab, ...) cannot sit
+   in a one-line quote or a # comment, so those values use bash's $'...' form
+   (the downloaded script is bash). */
+function shq(v) {
+  let s = String(v == null ? '' : v).replace(/\0/g, '');
+  if (s === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) && !/^-?~/.test(s)) return s;
+  let pre = '';
+  if (s.startsWith('~/') && s.length > 2) { pre = '~/'; s = s.slice(2); }
+  if (/[\x00-\x1f\x7f]/.test(s)) {
+    return pre + "$'" + s.replace(/[\\']|[\x00-\x1f\x7f]/g, c =>
+      c === '\\' ? '\\\\' : c === "'" ? "\\'" : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t'
+        : '\\x' + c.charCodeAt(0).toString(16).padStart(2, '0')) + "'";
+  }
+  return pre + "'" + s.replace(/'/g, "'\\''") + "'";
+}
+// <ref without its last extension>.mmi, quoted; takes the unquoted path from an effectiveState() view
+function mmiOf(s) { return shq(String((s._raw && s._raw.ref) || s.ref).replace(/\.[^.]+$/, '') + '.mmi'); }
+
+const DEFAULTS = JSON.parse(JSON.stringify(S));
+
 /* ═══════════════════════════════════════════════════
    ALIGNER DATABASE
 ═══════════════════════════════════════════════════ */
@@ -1044,7 +1069,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\n# HiFi / CCS reads:\nminimap2 -ax map-hifi -d ${mmi} ${s.ref}\n\n# CLR reads:\n# minimap2 -ax map-pb -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1071,7 +1096,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n# Pre-build saves time when aligning multiple samples to the same reference\n\nminimap2 -ax map-ont -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1101,7 +1126,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — pbmm2 align also accepts the FASTA directly\n# The .mmi bakes in the preset's k-mer/window size, so use the SAME --preset to align\n\npbmm2 index ${s.ref} ${mmi} --preset ${pbPreset(s)}`;
       },
       mem: '~10–20 GB (human genome)', time: '~5–10 min (human genome)',
@@ -1325,7 +1350,7 @@ const ALIGNERS = {
     notes: [],
     idx: {
       cmd: s => {
-        const mmi = s.ref.replace(/\.[^.]+$/, '') + '.mmi';
+        const mmi = mmiOf(s);
         return `# Pre-indexing is OPTIONAL — minimap2 can index on-the-fly each run\n\n# PacBio Iso-Seq:\nminimap2 -ax splice:hq -d ${mmi} ${s.ref}\n\n# ONT cDNA / direct RNA:\n# minimap2 -ax splice -d ${mmi} ${s.ref}\n\n# Then pass ${mmi} in place of the FASTA in the align command`;
       },
       mem: '~20 GB', time: '~10 min (human genome)',
@@ -1475,7 +1500,7 @@ const SC_CHEM = {
   '5v3': { label: '10x 5′ v3 (GEM-X, R2 only)', cb: 16, umi: 12, wl: '3M-5pgex-jan-2023.txt', af: '10xv3-5p', kb: '10XV3', five: true },
 };
 function scChem() { return SC_CHEM[S.scChem] || SC_CHEM['v3']; }
-function scWL()   { return (S.scWhitelist || '').trim() || scChem().wl; }
+function scWL(s = S) { return (s.scWhitelist || '').trim() || scChem().wl; }
 
 /* ═══════════════════════════════════════════════════
    VERBOSE OPTIONS DATABASE
@@ -2044,7 +2069,7 @@ function renderParams() {
 
   el.innerHTML = `
     <div class="param-grid">
-      ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${S.threads}" oninput="S.threads=this.value;refresh()">`)}
+      ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${esc(S.threads)}" oninput="S.threads=this.value;refresh()">`)}
       ${refPresetField()}
       ${refField}
       ${field('Output Prefix', `<input type="text" value="${esc(S.output)}" oninput="S.output=this.value;refresh()">`)}
@@ -2244,10 +2269,11 @@ function getVerboseFlags(al) {
   if (!S.verboseMode) return [];
   return (VERBOSE_OPTS[al] || []).reduce((acc, opt) => {
     const v = vOptsFor(al)[opt.key];
+    // values are user input: quote them (a check has no value)
     if (opt.type === 'check'  && v === true)                          acc.push(opt.cmd(v));
-    if (opt.type === 'text'   && v && v.trim())                       acc.push(opt.cmd(v.trim()));
-    if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(v));
-    if (opt.type === 'select' && v)                                   acc.push(opt.cmd(v));
+    if (opt.type === 'text'   && typeof v === 'string' && v.trim())   acc.push(opt.cmd(shq(v.trim())));
+    if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(shq(v)));
+    if (opt.type === 'select' && v)                                   acc.push(opt.cmd(shq(v)));
     return acc;
   }, []);
 }
@@ -2467,7 +2493,32 @@ function tgName(file, suffix) {
   return f.replace(/\.gz$/, '').replace(/\.(fastq|fq)$/, '') + suffix + (gz ? '.fq.gz' : '.fq');
 }
 
-function buildQCCmd() {
+/* Builders run against a view of S where blank path fields fall back to their
+   defaults and threads is a positive integer, so the commands never contain
+   empty arguments or `-t 0`. (Each _build*Cmd shadows the global S with this view.) */
+const PATH_KEYS = ['ref','refIdx','genomeDir','txomeFa','salmonIdx','kallistoIdx','r1','r2','reads','output',
+  'vcfFile','vgIdxPrefix','graphFile','dragenRefDir','dragmapRefDir','bismarkGenome','afIdx','kbIdx','kbT2g'];
+function effectiveState() {
+  const v = Object.assign({}, S);
+  // v._raw keeps the unquoted values for code that edits a path (extension, basename);
+  // everything the builders interpolate is shell-quoted here, once.
+  v._raw = {};
+  for (const k of PATH_KEYS) {
+    if (typeof v[k] !== 'string' || !v[k].trim()) v[k] = DEFAULTS[k];
+    v._raw[k] = v[k].trim();
+    v[k] = shq(v._raw[k]);
+  }
+  v.mosdepthBed = typeof S.mosdepthBed === 'string' && S.mosdepthBed.trim() ? shq(S.mosdepthBed.trim()) : '';
+  v.bt2Preset = shq(typeof S.bt2Preset === 'string' && S.bt2Preset ? S.bt2Preset : DEFAULTS.bt2Preset);
+  v.libType = shq(typeof S.libType === 'string' && S.libType ? S.libType : DEFAULTS.libType);
+  v.threads = /^\s*[1-9]\d*\s*$/.test(String(S.threads)) ? String(S.threads).trim() : DEFAULTS.threads;
+  return v;
+}
+function buildQCCmd()    { return _buildQCCmd(effectiveState()); }
+function buildIndexCmd() { return _buildIndexCmd(effectiveState()); }
+function buildAlignCmd() { return _buildAlignCmd(effectiveState()); }
+
+function _buildQCCmd(S) {
   if (!S.tech) return null;
   const T   = S.threads || '8';
   const OUT = S.output  || 'output';
@@ -2505,8 +2556,8 @@ function buildQCCmd() {
       .filter(Boolean).map(f => ` \\\n  ${f}`).join('');
     const TD = `${OUT}_trimmed`;
     const trimmed = S.paired
-      ? `${TD}/${tgName(S.r1, '_val_1')} ${TD}/${tgName(S.r2, '_val_2')}`
-      : `${TD}/${tgName(S.r1, '_trimmed')}`;
+      ? `${TD}/${shq(tgName(S._raw.r1, '_val_1'))} ${TD}/${shq(tgName(S._raw.r2, '_val_2'))}`
+      : `${TD}/${shq(tgName(S._raw.r1, '_trimmed'))}`;
     let c = `# Trim Galore — adapter + quality trimming for bisulfite reads\n`;
     c += rrbs
       ? `# --rrbs also removes the MspI end-repair artefact (2 bp from the 3' end of R1/SE, 2 bp from the 5' end of R2)\n`
@@ -2527,7 +2578,7 @@ function buildQCCmd() {
 /* ═══════════════════════════════════════════════════
    BUILD INDEX COMMAND
 ═══════════════════════════════════════════════════ */
-function buildIndexCmd() {
+function _buildIndexCmd(S) {
   const al = S.aligner;
   if (!al || !ALIGNERS[al]?.idx) return null;
   return ALIGNERS[al].idx.cmd(S);
@@ -2536,7 +2587,7 @@ function buildIndexCmd() {
 /* ═══════════════════════════════════════════════════
    BUILD ALIGN COMMAND
 ═══════════════════════════════════════════════════ */
-function buildAlignCmd() {
+function _buildAlignCmd(S) {
   const al = S.aligner;
   if (!al) return null;
 
@@ -2678,7 +2729,7 @@ function buildAlignCmd() {
 
     case 'pbmm2': {
       // pbmm2 reads uBAM (keeping all tags) or FASTQ natively
-      const mmi = (REF || '').replace(/\.[^.]+$/, '') + '.mmi';
+      const mmi = mmiOf(S);
       const opts = ` \\\n  --preset ${pbPreset()}${rgfml('pbmm2')}${vfml('pbmm2')} \\\n  -j ${T}`;
       if (CRAM) {
         // pbmm2 writes BAM only: stream unsorted BAM to stdout for samtools to encode
@@ -2751,7 +2802,7 @@ function buildAlignCmd() {
       c += ` \\\n  --readFilesIn ${R2} ${R1}`;   // cDNA read first, barcode read last
       if (gz) c += ` \\\n  --readFilesCommand zcat`;
       c += ` \\\n  --soloType CB_UMI_Simple`;
-      c += ` \\\n  --soloCBwhitelist ${scWL()}`;
+      c += ` \\\n  --soloCBwhitelist ${shq(scWL(S))}`;
       c += ` \\\n  --soloCBstart 1 \\\n  --soloCBlen ${ch.cb} \\\n  --soloUMIstart ${ch.cb + 1} \\\n  --soloUMIlen ${ch.umi}`;
       c += ` \\\n  --soloBarcodeReadLength 0`;
       if (ch.five) c += ` \\\n  --soloStrand Reverse`;
@@ -2781,7 +2832,7 @@ function buildAlignCmd() {
       c += ` \\\n  --index ${S.afIdx}/index`;
       c += ` \\\n  --chemistry ${ch.af}`;
       if (!vo.res) c += ` \\\n  --resolution cr-like`;
-      c += ` \\\n  --unfiltered-pl ${scWL()}`;
+      c += ` \\\n  --unfiltered-pl ${shq(scWL(S))}`;
       c += vfml('simpleaf');
       c += ` \\\n  --anndata-out \\\n  --threads ${T} \\\n  --output ${OUT}_simpleaf`;
       lines.push(c);
@@ -2797,7 +2848,7 @@ function buildAlignCmd() {
       const ch = scChem();
       let c = `kb count${S.scNuclei ? ' --workflow nac' : ''} \\\n  -i ${S.kbIdx} \\\n  -g ${S.kbT2g}`;
       if (S.scNuclei) c += ` \\\n  -c1 cdna_t2c.txt \\\n  -c2 nascent_t2c.txt \\\n  --sum total`;
-      c += ` \\\n  -x ${ch.kb} \\\n  -w ${scWL()}`;
+      c += ` \\\n  -x ${ch.kb} \\\n  -w ${shq(scWL(S))}`;
       if (ch.five) c += ` \\\n  --strand reverse`;
       c += vfml('kb');
       c += ` \\\n  --h5ad \\\n  -t ${T} \\\n  -o ${OUT}_kb \\\n  ${R1} ${R2}`;
@@ -3083,7 +3134,7 @@ function buildNotes() {
       notes.push({ type: 'info', text: `<strong>Keeping methylation tags:</strong> <code>samtools fastq -T ${MOD_TAGS}</code> writes the base-modification tags into each FASTQ header and <code>${al === 'bwa-mem' ? 'bwa mem -C' : al === 'winnowmap' ? 'winnowmap -y' : 'minimap2 -y'}</code> copies them into the alignments — downstream <a href="https://github.com/nanoporetech/modkit" target="_blank">modkit</a> (ONT) and <a href="https://github.com/PacificBiosciences/pb-CpG-tools" target="_blank">pb-CpG-tools</a> (PacBio) need them. Avoid <code>-T '*'</code> with a read group set: uBAM records often carry their own <code>RG:Z</code> tag, which would duplicate the one added by <code>-R</code>.` });
     }
     if (S.tech === 'ont' || S.tech === 'longrna') {
-      notes.push({ type: 'info', text: `<strong>ONT alternative:</strong> <code>dorado aligner ${S.ref || 'reference.fa'} ${S.reads || 'reads.bam'} &gt; aligned.bam</code> runs minimap2 inside dorado and keeps the modification tags with no FASTQ conversion.` });
+      notes.push({ type: 'info', text: `<strong>ONT alternative:</strong> <code>dorado aligner ${esc(S.ref || 'reference.fa')} ${esc(S.reads || 'reads.bam')} &gt; aligned.bam</code> runs minimap2 inside dorado and keeps the modification tags with no FASTQ conversion.` });
     }
   } else if (isLong && ['minimap2-pb','minimap2-ont','minimap2-rna','pbmm2','winnowmap'].includes(al)) {
     notes.push({ type: 'info', text: '<strong>Methylation calls?</strong> FASTQ input usually lacks the <code>MM</code>/<code>ML</code> base-modification tags. If your basecaller (dorado, Revio) produced an unaligned BAM, choose it as the input format to keep them for modkit / pb-CpG-tools.' });
@@ -3252,7 +3303,7 @@ function refresh() {
 
   // Persist state
   try { localStorage.setItem('ap_state', JSON.stringify(S)); } catch(e) {}
-  try { history.replaceState(null, '', '#' + btoa(JSON.stringify(S))); } catch(e) {}
+  try { history.replaceState(null, '', '#' + encodeState(S)); } catch(e) {}
 
   // Analysis panel
   const bodyEl = document.getElementById('analysis-body');
@@ -3330,24 +3381,7 @@ function downloadScript() {
     `# Tool: ${ALIGNERS[al]?.label || al}`,
     `# Date: ${new Date().toISOString().slice(0, 10)}`,
     '',
-    '# ── Variables ──────────────────────────────────────',
-    `THREADS=${S.threads || '8'}`,
   ];
-
-  if (['salmon','kallisto'].includes(al)) {
-    lines.push(`TXOME="${S.txomeFa || 'transcriptome.fa'}"`);
-  } else {
-    lines.push(`REF="${S.ref || 'reference.fa'}"`);
-  }
-
-  if (isLong) {
-    lines.push(`READS="${S.reads || 'sample.fastq.gz'}"`);
-  } else {
-    lines.push(`R1="${S.r1 || 'sample_R1.fastq.gz'}"`);
-    if (S.paired || S.tech === 'singlecell') lines.push(`R2="${S.r2 || 'sample_R2.fastq.gz'}"`);
-  }
-  lines.push(`OUTPUT="${S.output || 'output'}"`);
-  lines.push('');
 
   const qcCmd = buildQCCmd();
   if (qcCmd) {
@@ -3872,6 +3906,7 @@ async function renderDiagram() {
   document.getElementById('diagram-aligner-name').textContent = ALIGNERS[S.aligner]?.label || '';
 
   try {
+    if (typeof mermaid === 'undefined') throw new Error('mermaid not loaded');
     const { svg } = await mermaid.render('mg_' + Date.now(), def);
     body.innerHTML = svg;
   } catch(e) {
@@ -3891,7 +3926,9 @@ function toggleCitations() {
 }
 
 /* ── tiny XSS-safe escape for attribute values ── */
-function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 /* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
 function migrateState() {
@@ -3905,9 +3942,9 @@ function migrateState() {
     else { S.tech = null; S.aligner = null; }
   }
   // Drop any tech/aligner combination that is no longer offered
-  const techs = TECH_OPTIONS[S.expType] || [];
+  const techs = _own(TECH_OPTIONS, S.expType) ? TECH_OPTIONS[S.expType] : [];
   if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
-  const a = ALIGNERS[S.aligner];
+  const a = _own(ALIGNERS, S.aligner) ? ALIGNERS[S.aligner] : null;
   if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
   if (!SC_CHEM[S.scChem]) S.scChem = 'v3';
 }
@@ -3957,8 +3994,8 @@ function restoreUI() {
   refresh();
 }
 
-/* Init */
-mermaid.initialize({
+/* Init (Mermaid is optional: if the CDN is unreachable only the diagram is lost) */
+if (typeof mermaid !== 'undefined') mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   themeVariables: {
@@ -3974,25 +4011,67 @@ mermaid.initialize({
   flowchart: { curve: 'basis', padding: 12, htmlLabels: true },
 });
 
+/* URL-hash codec: base64 of UTF-8 JSON (plain btoa throws on non-Latin-1 characters).
+   decodeState also accepts old links, which were base64 of Latin-1/ASCII JSON. */
+function encodeState(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+function decodeState(b64) {
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch (e) { return bin; }
+}
+
+const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+/* Keep only known keys whose type matches the defaults, so a stale or hand-edited
+   hash / localStorage value can't throw or inject odd types into the builders. */
+function sanitizeSaved(saved) {
+  const out = {};
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return out;
+  for (const [k, v] of Object.entries(saved)) {
+    if (k === 'dragenSample') { if (typeof v === 'string') out[k] = v; continue; }   // legacy, migrated later
+    if (!_own(DEFAULTS, k)) continue;
+    const d = DEFAULTS[k];
+    if (d === null) { if (v === null || typeof v === 'string') out[k] = v; }
+    else if (typeof d === 'object') { if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = v; }
+    else if (typeof v === typeof d) out[k] = v;
+  }
+  if (out.expType != null && !_own(TECH_OPTIONS, out.expType)) return {};
+  if (out.aligner != null && !_own(ALIGNERS, out.aligner)) out.aligner = null;
+  return out;
+}
+
 (function () {
   let restored = false;
   // URL hash takes priority (shareable links)
   const hash = location.hash.slice(1);
   if (hash) {
     try {
-      const saved = JSON.parse(atob(hash));
+      const saved = sanitizeSaved(JSON.parse(decodeState(hash)));
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
   // Fall back to localStorage
   if (!restored) {
     try {
-      const saved = JSON.parse(localStorage.getItem('ap_state') || '{}');
+      const saved = sanitizeSaved(JSON.parse(localStorage.getItem('ap_state') || '{}'));
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
-  if (restored) { migrateVOpts(); migrateState(); restoreUI(); }
-  else refresh();
+  if (restored) {
+    try { migrateVOpts(); migrateState(); restoreUI(); }
+    catch (e) {   // never leave the page dead on bad saved state
+      console.warn('Could not restore saved state, starting fresh:', e);
+      try { localStorage.removeItem('ap_state'); } catch (_) {}
+      Object.assign(S, JSON.parse(JSON.stringify(DEFAULTS)));
+      refresh();
+    }
+  } else refresh();
 })();
 </script>
 </body>
