@@ -673,8 +673,12 @@ const S = {
   graphFile:     'pangenome.gfa',
   // DRAGEN
   dragenRefDir:  'dragen_hash_table',
-  dragenSample:  'sample1',
   dragenVC:      true,
+  // Sample / read group (shared by all BAM-producing aligners; empty sample = no RG)
+  rgSample:      '',
+  rgId:          '',
+  rgLib:         '',
+  rgPlatform:    '',   // '' = auto from S.tech
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1065,10 +1069,6 @@ const TECH_OPTIONS = {
 // cmd(v): returns the flag string to inject into the command
 const VERBOSE_OPTS = {
   'bwa-mem2': [
-    { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
-      placeholder: "@RG\\tID:sample1\\tSM:sample1\\tPL:ILLUMINA\\tLB:lib1",
-      why: 'Required for GATK HaplotypeCaller and most variant calling pipelines. Encodes sample name, library, and platform into the BAM header — without it, GATK will reject the file. Use \\t as a literal tab separator.',
-      cmd: v => `-R '${v}'` },
     { key: 'M', type: 'check', flag: '-M', label: 'Mark split reads as secondary',
       why: 'Picard MarkDuplicates compatibility. Without -M, chimeric/split alignments are flagged supplementary (0x800) rather than secondary (0x100), which confuses Picard and can inflate duplicate estimates.',
       cmd: () => '-M' },
@@ -1095,10 +1095,6 @@ const VERBOSE_OPTS = {
       cmd: v => `--intermediate-results-dir ${v}` },
   ],
   'bwa-mem': [
-    { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
-      placeholder: "@RG\\tID:sample1\\tSM:sample1\\tPL:ILLUMINA\\tLB:lib1",
-      why: 'Required for GATK variant calling. Encodes sample identity (SM), library (LB), and platform (PL) into the BAM header.',
-      cmd: v => `-R '${v}'` },
     { key: 'M', type: 'check', flag: '-M', label: 'Mark split reads as secondary',
       why: 'Picard MarkDuplicates compatibility. Flags chimeric alignments as secondary (0x100) instead of supplementary (0x800) — necessary when using Picard-based duplicate marking.',
       cmd: () => '-M' },
@@ -1155,10 +1151,6 @@ const VERBOSE_OPTS = {
       cmd: () => '-Y' },
   ],
   'star': [
-    { key: 'rg', type: 'text', flag: '--outSAMattrRGline', label: 'Read group line',
-      placeholder: 'ID:sample1 SM:sample1 PL:ILLUMINA LB:lib1',
-      why: 'Adds a @RG header. Required for GATK variant calling. Note: STAR uses space-separated fields (not \\t like BWA). Must include at minimum an ID field.',
-      cmd: v => `--outSAMattrRGline '${v}'` },
     { key: 'mmNmax', type: 'val', flag: '--outFilterMultimapNmax', label: 'Max multimapping loci', defaultVal: '10',
       why: 'Reads mapping to more than this many loci are discarded (default 10). Set to 1 for unique-mappers only — important for allele-specific expression or when repetitive-region reads would confound analysis. Increase for lncRNA or transposon quantification.',
       cmd: v => `--outFilterMultimapNmax ${v}` },
@@ -1227,14 +1219,6 @@ const VERBOSE_OPTS = {
       cmd: () => '--bias' },
   ],
   'vg-giraffe': [
-    { key: 'sample', type: 'text', flag: '--sample', label: 'Sample name',
-      placeholder: 'NA12878',
-      why: 'Sample name (SM) attached to every alignment. When --read-group is also set, giraffe writes an @RG header line with ID and SM; GATK HaplotypeCaller and DeepVariant need SM to identify the sample.',
-      cmd: v => `--sample '${v}'` },
-    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group ID',
-      placeholder: 'sample1_lane1',
-      why: 'Read group name only (not a full @RG line): tags each read with RG:Z:NAME and, together with --sample, adds "@RG ID:NAME SM:SAMPLE" to the header. Add other fields (LB, PL) afterwards with samtools addreplacerg if your pipeline needs them.',
-      cmd: v => `--read-group '${v}'` },
     { key: 'multimaps', type: 'val', flag: '--max-multimaps', label: 'Max alignments per read', defaultVal: '1',
       why: 'Default 1 reports only the primary alignment. Raising it also emits up to N−1 secondary alignments per read — useful for inspecting multi-mapping reads, but most variant-calling pipelines expect the default.',
       cmd: v => `--max-multimaps ${v}` },
@@ -1378,8 +1362,7 @@ function renderParams() {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
   } else if (al === 'dragen') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
-               field('Hash Table Directory', `<input type="text" value="${esc(S.dragenRefDir)}" oninput="S.dragenRefDir=this.value;refresh()">`) +
-               field('Sample Name (RGSM)', `<input type="text" value="${esc(S.dragenSample)}" oninput="S.dragenSample=this.value;refresh()">`);
+               field('Hash Table Directory', `<input type="text" value="${esc(S.dragenRefDir)}" oninput="S.dragenRefDir=this.value;refresh()">`);
   } else if (al === 'vg-giraffe') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
@@ -1448,6 +1431,7 @@ function renderParams() {
       ${pairedSel}
     </div>
     <div class="param-grid">${readFields}</div>
+    ${renderReadGroup()}
     ${extraOpts}
     <div class="verbose-toggle-wrap">
       <label class="check-item">
@@ -1459,6 +1443,76 @@ function renderParams() {
       </label>
     </div>
     ${S.verboseMode ? renderVerboseSection() : ''}`;
+}
+
+/* ── Sample / read group (shared by all BAM-producing aligners) ── */
+// Aligners with no SAM/BAM @RG header to attach a read group to
+const RG_NONE = ['salmon','kallisto','graphaligner'];
+// DNA aligners whose output usually feeds GATK / DeepVariant (warn when RG is empty)
+const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe'];
+const RG_PLATFORMS = ['ILLUMINA','PACBIO','ONT','ELEMENT','ULTIMA','DNBSEQ','IONTORRENT'];
+function rgAutoPlatform() {
+  return { illumina: 'ILLUMINA', pacbio: 'PACBIO', ont: 'ONT' }[S.tech] || '';
+}
+// Keep RG values shell- and SAM-safe: no whitespace, quotes, tabs or shell metacharacters
+function rgClean(v) {
+  return String(v || '').trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9._\-:+\/@=,]/g, '');
+}
+// Resolved RG fields, or null when no sample is set (DRAGEN always needs one: default sample1)
+function rgFields(al) {
+  if (RG_NONE.includes(al)) return null;
+  let SM = rgClean(S.rgSample);
+  if (!SM && al === 'dragen') SM = 'sample1';
+  if (!SM) return null;
+  return {
+    ID: rgClean(S.rgId) || SM,
+    SM,
+    PL: rgClean(S.rgPlatform) || rgAutoPlatform(),
+    LB: rgClean(S.rgLib),
+  };
+}
+// Each aligner's own read-group flags, as an array of argument strings
+function rgArgs(al) {
+  const rg = rgFields(al);
+  if (!rg) return [];
+  const extra = [['PL', rg.PL], ['LB', rg.LB]].filter(([, v]) => v);
+  switch (al) {
+    case 'bwa-mem2': case 'bwa-mem':
+    case 'minimap2-pb': case 'minimap2-ont': case 'minimap2-rna':
+      // literal \t — the tools expand it to a tab themselves
+      return [`-R '@RG\\tID:${rg.ID}\\tSM:${rg.SM}${extra.map(([k, v]) => `\\t${k}:${v}`).join('')}'`];
+    case 'bowtie2': case 'hisat2':
+      return [`--rg-id ${rg.ID}`, `--rg SM:${rg.SM}`, ...extra.map(([k, v]) => `--rg ${k}:${v}`)];
+    case 'star':
+      return [`--outSAMattrRGline ID:${rg.ID} SM:${rg.SM}${extra.map(([k, v]) => ` ${k}:${v}`).join('')}`];
+    case 'vg-giraffe':
+      return [`--sample ${rg.SM}`, `--read-group ${rg.ID}`];
+    case 'dragen':
+      return [`--RGID ${rg.ID}`, `--RGSM ${rg.SM}`, ...extra.map(([k, v]) => `--RG${k} ${v}`)];
+    default:
+      return [];
+  }
+}
+// Inline (" -R '...'") and multi-line (" \\\n  --flag val") forms, like vf()/vfml()
+function rgf(al)   { const a = rgArgs(al); return a.length ? ' ' + a.join(' ') : ''; }
+function rgfml(al) { return rgArgs(al).map(x => ` \\\n  ${x}`).join(''); }
+
+function renderReadGroup() {
+  if (RG_NONE.includes(S.aligner)) return '';
+  const auto = rgAutoPlatform();
+  const plOpts = [`<option value="" ${!S.rgPlatform?'selected':''}>Auto${auto ? ` (${auto})` : ' (omit)'}</option>`]
+    .concat(RG_PLATFORMS.map(p => `<option value="${p}" ${S.rgPlatform===p?'selected':''}>${p}</option>`)).join('');
+  const giraffeNote = S.aligner === 'vg-giraffe'
+    ? `<div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">vg giraffe only writes ID and SM to the @RG line; add LB/PL afterwards with <code>samtools addreplacerg</code> if your pipeline needs them.</div>` : '';
+  return `<div class="verbose-section-head" style="margin-top:1.1rem;">Sample / read group</div>
+    <div class="param-grid">
+      ${field('Sample name (SM)', `<input type="text" value="${esc(S.rgSample)}" placeholder="${S.aligner==='dragen'?'sample1 (default)':'leave empty for no @RG'}" oninput="S.rgSample=this.value;refresh()">`)}
+      ${field('Read group ID <span style="font-weight:400;color:var(--muted)">default: sample</span>', `<input type="text" value="${esc(S.rgId)}" placeholder="e.g. sample1_L001" oninput="S.rgId=this.value;refresh()">`)}
+      ${field('Library (LB)', `<input type="text" value="${esc(S.rgLib)}" placeholder="optional, e.g. lib1" oninput="S.rgLib=this.value;refresh()">`)}
+      <div class="field"><label>Platform (PL)</label>
+        <select onchange="S.rgPlatform=this.value;refresh()">${plOpts}</select>
+      </div>
+    </div>${giraffeNote}`;
 }
 
 function field(label, inputHtml) {
@@ -1710,40 +1764,39 @@ function buildAlignCmd() {
   switch (al) {
 
     case 'bwa-mem2':
-      lines.push(pipe(`bwa-mem2 mem -t ${T}${vf('bwa-mem2')} ${REF} ${reads}`));
+      lines.push(pipe(`bwa-mem2 mem -t ${T}${rgf('bwa-mem2')}${vf('bwa-mem2')} ${REF} ${reads}`));
       break;
 
     case 'dragen': {
       const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-1 ${R1}`;
-      const SM    = S.dragenSample || 'sample1';
       const sort  = S.sortBam ? 'true' : 'false';
       const dedup = S.markDups && S.sortBam ? 'true' : 'false';
       lines.push(`mkdir -p ${OUT}_dragen`);
-      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg} \\\n  --RGID ${SM} \\\n  --RGSM ${SM} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format BAM \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
+      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg}${rgfml('dragen')} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format BAM \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
       break;
     }
 
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
-      lines.push(pipe(`bwa mem${xFlag} -t ${T}${vf('bwa-mem')} ${REF} ${inReads}`));
+      lines.push(pipe(`bwa mem${xFlag} -t ${T}${rgf('bwa-mem')}${vf('bwa-mem')} ${REF} ${inReads}`));
       break;
     }
 
     case 'bowtie2': {
       const preset = S.bt2Preset || '--sensitive';
       const inArg  = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
-      lines.push(pipe(`bowtie2 ${preset} -p ${T}${vf('bowtie2')} -x ${S.refIdx} \\\n  ${inArg}`));
+      lines.push(pipe(`bowtie2 ${preset} -p ${T}${vf('bowtie2')} -x ${S.refIdx}${rgfml('bowtie2')} \\\n  ${inArg}`));
       break;
     }
 
     case 'minimap2-pb':
       lines.push('# Use -ax map-hifi for HiFi/CCS reads, -ax map-pb for CLR reads');
-      lines.push(pipe(`minimap2 -ax map-hifi${vf('minimap2-pb')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax map-hifi${rgf('minimap2-pb')}${vf('minimap2-pb')} -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'minimap2-ont':
-      lines.push(pipe(`minimap2 -ax map-ont${vf('minimap2-ont')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax map-ont${rgf('minimap2-ont')}${vf('minimap2-ont')} -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'star': {
@@ -1757,6 +1810,7 @@ function buildAlignCmd() {
       star += ` \\\n  --outFileNamePrefix ${OUT}/`;
       if (S.starTwoPass)   star += ` \\\n  --twopassMode Basic`;
       if (S.starQuantMode) star += ` \\\n  --quantMode GeneCounts`;
+      star += rgfml('star');
       star += vfml('star');
       lines.push(star);
       break;
@@ -1764,7 +1818,7 @@ function buildAlignCmd() {
 
     case 'hisat2': {
       const inArg = S.paired ? `-1 ${R1} -2 ${R2}` : `-U ${R1}`;
-      lines.push(pipe(`hisat2 -p ${T}${vf('hisat2')} -x ${S.refIdx} \\\n  ${inArg}`));
+      lines.push(pipe(`hisat2 -p ${T}${vf('hisat2')} -x ${S.refIdx}${rgfml('hisat2')} \\\n  ${inArg}`));
       break;
     }
 
@@ -1785,12 +1839,12 @@ function buildAlignCmd() {
 
     case 'minimap2-rna':
       lines.push('# Use -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
-      lines.push(pipe(`minimap2 -ax splice:hq${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
+      lines.push(pipe(`minimap2 -ax splice:hq${rgf('minimap2-rna')}${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
       break;
 
     case 'vg-giraffe': {
       const inFlags = S.paired ? `-f ${R1} \\\n  -f ${R2}` : `-f ${R1}`;
-      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.shortread.withzip.min \\\n  -z ${S.vgIdxPrefix}.shortread.zipcodes \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
+      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.shortread.withzip.min \\\n  -z ${S.vgIdxPrefix}.shortread.zipcodes \\\n  ${inFlags} \\\n  --output-format SAM${rgfml('vg-giraffe')}${vfml('vg-giraffe')} \\\n  -t ${T}`));
       break;
     }
 
@@ -1902,6 +1956,13 @@ function buildNotes() {
   // DRAGEN gVCF without the variant caller
   if (al === 'dragen' && S.verboseMode && vOptsFor('dragen').dgGvcf && !S.dragenVC) {
     notes.push({ type: 'warn', text: '<strong>gVCF needs the variant caller:</strong> <code>--vc-emit-ref-confidence GVCF</code> has no effect unless "Call small variants" is enabled.' });
+  }
+
+  // Read group / sample missing
+  if (S.expType === 'dna' && RG_VARIANT.includes(al) && !rgClean(S.rgSample)) {
+    notes.push({ type: 'warn', text: '<strong>No read group:</strong> GATK and most variant callers reject BAMs without an <code>@RG</code> line (DeepVariant needs <code>SM</code> to name the sample). Set a sample name under "Sample / read group" above.' });
+  } else if (al === 'dragen' && !rgClean(S.rgSample)) {
+    notes.push({ type: 'info', text: '<strong>Sample name:</strong> DRAGEN requires <code>--RGID</code>/<code>--RGSM</code> for FASTQ input; defaulting both to <code>sample1</code>. Set a sample name above to name the output VCF sample.' });
   }
 
   // DRAGEN licensing
@@ -2360,6 +2421,7 @@ function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 
 /* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
 function migrateState() {
+  migrateReadGroup();   // before the aligner may be cleared below
   if (S.tech === 'pangenome') {
     if (S.aligner === 'vg-giraffe')        S.tech = 'illumina';
     else if (S.aligner === 'graphaligner') S.tech = 'pacbio';
@@ -2370,6 +2432,28 @@ function migrateState() {
   if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
   const a = ALIGNERS[S.aligner];
   if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
+}
+
+/* ── Carry legacy per-aligner read-group settings into the shared RG fields ── */
+function migrateReadGroup() {
+  // Old saves always carried dragenSample ('sample1' default); only adopt it for DRAGEN or a custom value
+  const ds = typeof S.dragenSample === 'string' ? S.dragenSample.trim() : '';
+  if (ds && !S.rgSample && (S.aligner === 'dragen' || ds !== 'sample1')) S.rgSample = ds;
+  delete S.dragenSample;
+  const v = (S.vOpts && typeof S.vOpts === 'object') ? S.vOpts : {};
+  for (const [al, o] of Object.entries(v)) {
+    if (!o || typeof o !== 'object') continue;
+    if (!S.rgSample && typeof o.sample === 'string') S.rgSample = o.sample.trim();
+    if (typeof o.rg === 'string') {
+      // @RG string (BWA: "@RG\tID:x\tSM:y", STAR: "ID:x SM:y") or giraffe's bare ID
+      const tag = t => (o.rg.match(new RegExp(`(?:^|\\\\t|\\s)${t}:([^\\s\\\\]+)`)) || [])[1];
+      const id = al === 'vg-giraffe' ? o.rg.trim() : tag('ID');
+      if (!S.rgSample && tag('SM')) S.rgSample = tag('SM');
+      if (!S.rgId && id) S.rgId = id;
+      if (!S.rgLib && tag('LB')) S.rgLib = tag('LB');
+    }
+    delete o.rg; delete o.sample;
+  }
 }
 
 /* ── Restore UI after state is loaded from hash/localStorage ── */
