@@ -1801,8 +1801,12 @@ function buildAlignCmd() {
   const samView = CRAM
     ? `samtools view -@ ${T} -C -T ${REF} -o ${OUT}.cram`
     : `samtools view -@ ${T} -bS -o ${OUT}.bam`;
+  // markdup on paired-end data needs mate tags (MC, ms) from fixmate -m,
+  // which must run on name-grouped reads — i.e. straight off the aligner.
+  const fixmate = S.markDups && S.sortBam && S.paired && !['pacbio','ont','longrna'].includes(S.tech)
+    ? ` \\\n  | samtools fixmate -@ ${T} -m -u - -` : '';
   const pipe    = (cmd) => S.sortBam
-    ? `${cmd} \\\n  | ${samSort}`
+    ? `${cmd}${fixmate} \\\n  | ${samSort}`
     : `${cmd} \\\n  | ${samView}`;
 
   switch (al) {
@@ -1916,7 +1920,10 @@ function buildAlignCmd() {
     let aligned = `${OUT}.${EXT}`;
     if (al === 'star') {
       const starBam = `${OUT}/Aligned.${S.sortBam ? 'sortedByCoord.' : ''}out.bam`;
-      if (CRAM) {
+      if (fixmate) {
+        // STAR's sorted BAM isn't name-grouped: collate, add mate tags, re-sort
+        postLines.push(`samtools collate -@ ${T} -O -u ${starBam} \\\n  | samtools fixmate -@ ${T} -m -u - - \\\n  | ${samSort} -`);
+      } else if (CRAM) {
         postLines.push(`samtools view -@ ${T} -C -T ${REF} -o ${OUT}.cram ${starBam}`);
       } else {
         aligned = starBam;
@@ -2299,7 +2306,9 @@ function buildDiagram() {
   // Sort pipe or plain BAM/CRAM output
   function bamOut(from) {
     if (S.sortBam) {
-      return `    SORT["samtools sort${CRAM ? ' -O cram' : ''}"]:::tool\n    BAM(["${OUT}.${EXT}"]):::out\n    ${from} --> SORT --> BAM\n${CRAM ? '    REF -.->|reference| SORT\n' : ''}`;
+      const fm = S.markDups && S.paired && !['pacbio','ont','longrna'].includes(S.tech);
+      const via = fm ? `${from} --> FIXM --> SORT` : `${from} --> SORT`;
+      return `${fm ? '    FIXM["samtools fixmate -m"]:::tool\n' : ''}    SORT["samtools sort${CRAM ? ' -O cram' : ''}"]:::tool\n    BAM(["${OUT}.${EXT}"]):::out\n    ${via} --> BAM\n${CRAM ? '    REF -.->|reference| SORT\n' : ''}`;
     }
     return CRAM
       ? `    VIEW["samtools view -C"]:::tool\n    BAM(["${OUT}.cram"]):::out\n    ${from} --> VIEW --> BAM\n    REF -.->|reference| VIEW\n`
