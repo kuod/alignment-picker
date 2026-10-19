@@ -123,6 +123,8 @@ header p  { opacity: 0.8; font-size: 1rem; }
 .tag-popular  { background: #ede9fe; color: #5b21b6; }
 .tag-memory   { background: #fef3c7; color: #92400e; }
 .tag-new      { background: #dbeafe; color: #1d4ed8; }
+.tag-paid     { background: #fee2e2; color: #991b1b; }
+.tag-graph    { background: #fce7f3; color: #9d174d; }
 
 /* ── Param grid ── */
 .param-grid {
@@ -602,6 +604,14 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">DRAGEN</td>
+            <td class="cite-ref">
+              Behera S, et al. <em>Comprehensive genome analysis and variant detection at scale using DRAGEN.</em>
+              <span class="cite-journal">Nature Biotechnology</span>, 2024.
+              <a href="https://doi.org/10.1038/s41587-024-02382-1" target="_blank">doi:10.1038/s41587-024-02382-1</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">vg / vg giraffe</td>
             <td class="cite-ref">
               Sirén J, et al. <em>Pangenomics enables genotyping of known structural variants in 5202 diverse genomes.</em>
@@ -661,6 +671,10 @@ const S = {
   vcfFile:       'variants.vcf.gz',
   vgIdxPrefix:   'graph_index',
   graphFile:     'pangenome.gfa',
+  // DRAGEN
+  dragenRefDir:  'dragen_hash_table',
+  dragenSample:  'sample1',
+  dragenVC:      true,
 };
 
 /* ═══════════════════════════════════════════════════
@@ -690,6 +704,34 @@ const ALIGNERS = {
       mem: '~60 GB peak', time: '~2 h (human genome)',
       outputs: '${ref}.0123, .amb, .ann, .bwt.2bit.64, .pac',
       note: 'Index is NOT compatible with BWA-MEM — must be rebuilt when switching tools.',
+    },
+  },
+  'dragen': {
+    label: 'DRAGEN', tags: ['fast','paid'],
+    dna: true, rna: false, quantOnly: false, builtinPost: true,
+    techs: ['illumina'],
+    desc: 'Illumina\'s hardware-accelerated WGS/WES pipeline — alignment, sorting, dedup, and variant calling in one pass',
+    pros: [
+      '30× human WGS from FASTQ to VCF in ~30 min on an FPGA server',
+      'Sorting, duplicate marking, and BAM indexing done internally — no samtools steps',
+      'Among the top performers for SNV/indel accuracy in the precisionFDA Truth Challenge V2',
+      'Multigenome (graph) hash tables reduce reference bias with no extra steps',
+      'Same run can emit CNV, SV, and repeat-expansion calls',
+    ],
+    cons: [
+      'Commercial license — requires DRAGEN FPGA server or a paid cloud instance (AWS F1/F2, Illumina Connected Analytics)',
+      'Closed source; results tied to DRAGEN version — pin versions for reproducibility',
+      'Hash table is version-specific and must be rebuilt (or re-downloaded) on DRAGEN upgrades',
+      'Illumina short reads only in this mode',
+    ],
+    best: 'High-throughput clinical and population-scale Illumina WGS/WES where turnaround time matters',
+    notes: [],
+    idx: {
+      cmd: s => `mkdir -p ${s.dragenRefDir}\ndragen \\\n  --build-hash-table true \\\n  --ht-reference ${s.ref} \\\n  --output-directory ${s.dragenRefDir}`,
+      mem: 'Runs on DRAGEN server (~128 GB host RAM)',
+      time: '~1 h (human genome)',
+      outputs: '${dragenRefDir}/ hash_table.cfg, hash_table.cmp, ref_index.bin, …',
+      note: 'For hg38, Illumina ships prebuilt multigenome (graph) hash tables that are recommended over building your own. Hash tables are tied to the DRAGEN software version.',
     },
   },
   'bwa-mem': {
@@ -943,9 +985,9 @@ const ALIGNERS = {
     },
   },
   'vg-giraffe': {
-    label: 'vg giraffe', tags: ['new'],
+    label: 'vg giraffe', tags: ['graph'],
     dna: true, rna: false, quantOnly: false, graphOutput: false,
-    techs: ['pangenome'],
+    techs: ['illumina'],
     desc: 'Haplotype-aware short-read alignment to a pangenome variation graph',
     pros: [
       'Reduces reference bias — critical for diverse or admixed cohorts',
@@ -963,17 +1005,17 @@ const ALIGNERS = {
     best: 'Population genetics, diverse cohorts, pangenome-aware variant calling, HPRC graph workflows',
     notes: [],
     idx: {
-      cmd: s => `vg autoindex \\\n  --workflow giraffe \\\n  --vcf ${s.vcfFile} \\\n  --ref ${s.ref} \\\n  --prefix ${s.vgIdxPrefix} \\\n  --threads ${s.threads}`,
+      cmd: s => `vg autoindex \\\n  --workflow giraffe \\\n  --vcf ${s.vcfFile} \\\n  --ref-fasta ${s.ref} \\\n  --prefix ${s.vgIdxPrefix} \\\n  --threads ${s.threads}`,
       mem: '~50 GB (human + 1000G variants)',
       time: '~2–4 h (human genome)',
-      outputs: '${prefix}.giraffe.gbz, ${prefix}.dist, ${prefix}.min',
-      note: 'vg autoindex handles graph construction, GBWT haplotype indexing, and minimizer index in one command. Use a phased VCF (e.g., 1000 Genomes) for best haplotype representation.',
+      outputs: '${prefix}.giraffe.gbz, ${prefix}.dist, ${prefix}.shortread.withzip.min, ${prefix}.shortread.zipcodes',
+      note: 'vg autoindex handles graph construction, GBWT haplotype indexing, distance index, and minimizer + zipcode indexes in one command. Use a phased VCF (e.g., 1000 Genomes) for best haplotype representation. Older vg releases wrote a single ${prefix}.min with no zipcodes file — adjust -m/-z to match the files you have.',
     },
   },
   'graphaligner': {
-    label: 'GraphAligner', tags: ['new'],
+    label: 'GraphAligner', tags: ['graph'],
     dna: true, rna: false, quantOnly: false, graphOutput: true,
-    techs: ['pangenome'],
+    techs: ['pacbio','ont'],
     desc: 'Long-read aligner to pangenome graphs — PacBio HiFi and ONT',
     pros: [
       'Best accuracy for long-read alignment to variation graphs',
@@ -1008,7 +1050,6 @@ const TECH_OPTIONS = {
     { val: 'illumina',  label: 'Illumina Short Reads',    desc: 'WGS, WES, ChIP-seq, ATAC-seq, amplicon (<300 bp reads)' },
     { val: 'pacbio',    label: 'PacBio Long Reads',       desc: 'CLR or HiFi/CCS reads (5–25 kb average read length)' },
     { val: 'ont',       label: 'Oxford Nanopore',         desc: 'ONT reads, ultra-long reads (up to megabases)' },
-    { val: 'pangenome', label: 'Pangenome / Graph Genome', desc: 'Align to a variation graph (VCF + reference) for reduced reference bias' },
   ],
   rna: [
     { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
@@ -1037,6 +1078,21 @@ const VERBOSE_OPTS = {
     { key: 'T', type: 'val', flag: '-T', label: 'Minimum alignment score', defaultVal: '30',
       why: 'Reads scoring below this threshold are not written to output. Lower values (e.g., 20) recover weakly mapping reads in divergent or repetitive regions. Higher values (40+) reduce noise but can miss real alignments near repeat boundaries.',
       cmd: v => `-T ${v}` },
+  ],
+  'dragen': [
+    { key: 'dgGvcf', type: 'check', flag: '--vc-emit-ref-confidence GVCF', label: 'Emit gVCF',
+      why: 'Writes a genome VCF with reference-confidence blocks in addition to the VCF. Required for joint genotyping across a cohort (DRAGEN gVCF Genotyper or GATK GenotypeGVCFs). Needs the variant caller enabled.',
+      cmd: () => '--vc-emit-ref-confidence GVCF' },
+    { key: 'dgCnv', type: 'check', flag: '--enable-cnv true', label: 'Copy number variant calling',
+      why: 'Runs the DRAGEN CNV caller in the same pass. Self-normalization is enabled so no panel of normals is needed — appropriate for WGS; for WES a panel of normals is recommended instead.',
+      cmd: () => '--enable-cnv true \\\n  --cnv-enable-self-normalization true' },
+    { key: 'dgSv', type: 'check', flag: '--enable-sv true', label: 'Structural variant calling',
+      why: 'Runs the Manta-based DRAGEN SV caller on the aligned reads. Detects deletions, insertions, inversions, duplications, and translocations ≥50 bp.',
+      cmd: () => '--enable-sv true' },
+    { key: 'dgTmp', type: 'text', flag: '--intermediate-results-dir', label: 'Intermediate results directory',
+      placeholder: '/staging/tmp',
+      why: 'Where DRAGEN writes temporary files. Point this at the fast local NVMe staging volume on a DRAGEN server — using network storage slows the run considerably.',
+      cmd: v => `--intermediate-results-dir ${v}` },
   ],
   'bwa-mem': [
     { key: 'rg', type: 'text', flag: '-R', label: 'Read group string',
@@ -1173,23 +1229,22 @@ const VERBOSE_OPTS = {
   'vg-giraffe': [
     { key: 'sample', type: 'text', flag: '--sample', label: 'Sample name',
       placeholder: 'NA12878',
-      why: 'Embeds a sample name in the output SAM/BAM header. Required for downstream vg call and GATK pangenome variant calling. Equivalent to the SM field in a BAM read group.',
+      why: 'Sample name (SM) attached to every alignment. When --read-group is also set, giraffe writes an @RG header line with ID and SM; GATK HaplotypeCaller and DeepVariant need SM to identify the sample.',
       cmd: v => `--sample '${v}'` },
-    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group (RG line)',
-      placeholder: 'ID:sample1\tLB:lib1\tPL:ILLUMINA',
-      why: 'Adds a full @RG header line to the output. Required for GATK HaplotypeCaller. Use tab-separated fields matching the SAM spec.',
+    { key: 'rg', type: 'text', flag: '--read-group', label: 'Read group ID',
+      placeholder: 'sample1_lane1',
+      why: 'Read group name only (not a full @RG line): tags each read with RG:Z:NAME and, together with --sample, adds "@RG ID:NAME SM:SAMPLE" to the header. Add other fields (LB, PL) afterwards with samtools addreplacerg if your pipeline needs them.',
       cmd: v => `--read-group '${v}'` },
-    { key: 'nosec', type: 'check', flag: '--no-secondary', label: 'Suppress secondary alignments',
-      why: 'Limits output to primary alignments only. Reduces file size and simplifies variant calling pipelines that discard secondary reads anyway.',
-      cmd: () => '--no-secondary' },
-    { key: 'mapq', type: 'select', flag: '--mapq-method', label: 'MAPQ method',
+    { key: 'multimaps', type: 'val', flag: '--max-multimaps', label: 'Max alignments per read', defaultVal: '1',
+      why: 'Default 1 reports only the primary alignment. Raising it also emits up to N−1 secondary alignments per read — useful for inspecting multi-mapping reads, but most variant-calling pipelines expect the default.',
+      cmd: v => `--max-multimaps ${v}` },
+    { key: 'preset', type: 'select', flag: '--parameter-preset', label: 'Parameter preset',
       options: [
-        { val: 'fast',    label: 'fast (default)' },
-        { val: 'exact',   label: 'exact (more accurate, slower)' },
-        { val: 'adaptive', label: 'adaptive (balanced)' },
+        { val: '',     label: '— default —' },
+        { val: 'fast', label: 'fast (fewer seeds/extensions, faster)' },
       ],
-      why: '"fast" is the default and sufficient for most variant calling. "exact" computes mapping quality more accurately but is significantly slower — use when MAPQ precision is critical (e.g., allele-specific expression, difficult regions).',
-      cmd: v => `--mapq-method ${v}` },
+      why: '"default" is tuned for accuracy on short reads. "fast" caps minimizer hits, extensions and alignments per read for higher throughput at a small accuracy cost — reasonable for large cohorts where runtime dominates.',
+      cmd: v => `--parameter-preset ${v}` },
   ],
   'graphaligner': [
     { key: 'preset', type: 'select', flag: '-x', label: 'Graph type preset',
@@ -1199,11 +1254,11 @@ const VERBOSE_OPTS = {
       ],
       why: 'Selects alignment parameters tuned to the graph type. Use vg for variation graphs (built with vg construct or from HPRC). Use dbg for de Bruijn graphs from genome assemblers.',
       cmd: v => `-x ${v}` },
-    { key: 'bw', type: 'val', flag: '--bandwidth', label: 'Alignment bandwidth', defaultVal: '50',
-      why: 'Controls the DP band width during graph alignment. Larger values improve sensitivity for reads with high error rates (ONT) or complex indels at the cost of runtime. Default 50 is good for HiFi; increase to 100+ for ONT.',
+    { key: 'bw', type: 'val', flag: '--bandwidth', label: 'Alignment bandwidth', defaultVal: '10',
+      why: 'Controls the DP band width during graph alignment. Larger values improve sensitivity for reads with high error rates (ONT) or complex indels at the cost of runtime. The vg preset sets 10 (dbg sets 5); increase it for noisier reads.',
       cmd: v => `--bandwidth ${v}` },
-    { key: 'multimap', type: 'val', flag: '--multimap-score-fraction', label: 'Multimapping score fraction', defaultVal: '0.99',
-      why: 'Reports secondary alignments with score ≥ this fraction of the primary score. Set to 1.0 to suppress all secondary alignments. Useful when studying repetitive or duplicated graph regions.',
+    { key: 'multimap', type: 'val', flag: '--multimap-score-fraction', label: 'Multimapping score fraction', defaultVal: '0.9',
+      why: 'Discards alignments whose score is below this fraction of the best overlapping alignment (default 0.9). Raise toward 1.0 to keep only the best-scoring alignments; lower it to retain more secondary alignments in repetitive or duplicated graph regions.',
       cmd: v => `--multimap-score-fraction ${v}` },
   ],
   'minimap2-rna': [
@@ -1232,6 +1287,8 @@ const TAG_HTML = {
   popular: '<span class="tag tag-popular">Popular</span>',
   memory:  '<span class="tag tag-memory">Low memory</span>',
   new:     '<span class="tag tag-new">New</span>',
+  paid:    '<span class="tag tag-paid">Commercial</span>',
+  graph:   '<span class="tag tag-graph">Pangenome</span>',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1301,7 +1358,7 @@ function renderParams() {
   const info = ALIGNERS[al];
   if (!info) { el.innerHTML = ''; return; }
 
-  const isLong  = ['pacbio','ont','longrna'].includes(S.tech) || al === 'graphaligner';
+  const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
   const isQuant = info.quantOnly;
 
   /* ---------- reference/index field ---------- */
@@ -1319,6 +1376,10 @@ function renderParams() {
                field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
   } else if (['bowtie2','hisat2'].includes(al)) {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
+  } else if (al === 'dragen') {
+    refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
+               field('Hash Table Directory', `<input type="text" value="${esc(S.dragenRefDir)}" oninput="S.dragenRefDir=this.value;refresh()">`) +
+               field('Sample Name (RGSM)', `<input type="text" value="${esc(S.dragenSample)}" oninput="S.dragenSample=this.value;refresh()">`);
   } else if (al === 'vg-giraffe') {
     refField = field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Variants VCF (.vcf.gz)', `<input type="text" value="${esc(S.vcfFile)}" oninput="S.vcfFile=this.value;refresh()">`) +
@@ -1412,7 +1473,31 @@ function check(key, label, desc) {
 }
 
 /* ── Verbose helpers ── */
-function setVOpt(key, val) { S.vOpts[key] = val; }
+// Verbose option values are namespaced per aligner: S.vOpts[aligner][key]
+function vOptsFor(al) {
+  if (!S.vOpts || typeof S.vOpts !== 'object') S.vOpts = {};
+  if (!al) return {};
+  const o = S.vOpts[al];
+  return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+}
+function setVOpt(key, val) {
+  const al = S.aligner;
+  if (!al) return;
+  S.vOpts[al] = Object.assign(vOptsFor(al), { [key]: val });
+}
+function getVOpt(key) { return vOptsFor(S.aligner)[key]; }
+// Old state stored a flat {key: value} map; move it under the current aligner.
+function migrateVOpts() {
+  const v = S.vOpts;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { S.vOpts = {}; return; }
+  const isNs = x => x && typeof x === 'object' && !Array.isArray(x);
+  const vals = Object.values(v);
+  if (vals.length && !vals.every(isNs)) {
+    const flat = {};
+    for (const [k, x] of Object.entries(v)) if (!isNs(x)) flat[k] = x;
+    S.vOpts = S.aligner ? { [S.aligner]: flat } : {};
+  }
+}
 
 function toggleVOptInput(key, enabled) {
   const inp = document.getElementById('vv_' + key);
@@ -1425,7 +1510,7 @@ function toggleVOptInput(key, enabled) {
 function getVerboseFlags(al) {
   if (!S.verboseMode) return [];
   return (VERBOSE_OPTS[al] || []).reduce((acc, opt) => {
-    const v = S.vOpts[opt.key];
+    const v = vOptsFor(al)[opt.key];
     if (opt.type === 'check'  && v === true)                          acc.push(opt.cmd(v));
     if (opt.type === 'text'   && v && v.trim())                       acc.push(opt.cmd(v.trim()));
     if (opt.type === 'val'    && v !== undefined && v !== null && v !== '') acc.push(opt.cmd(v));
@@ -1452,7 +1537,7 @@ function renderVerboseSection() {
   if (!opts.length) return '';
 
   const items = opts.map(opt => {
-    const val = S.vOpts[opt.key];
+    const val = vOptsFor(al)[opt.key];
 
     if (opt.type === 'check') {
       return `<div class="verbose-item">
@@ -1487,7 +1572,7 @@ function renderVerboseSection() {
           <input type="text" id="vv_${opt.key}" class="verbose-val-input"
             value="${esc(enabled ? String(val) : (opt.defaultVal||''))}"
             ${enabled?'':'disabled'}
-            oninput="if(S.vOpts['${opt.key}']!==null&&S.vOpts['${opt.key}']!==undefined)setVOpt('${opt.key}',this.value||null);refresh()">
+            oninput="if(getVOpt('${opt.key}')!==null&&getVOpt('${opt.key}')!==undefined)setVOpt('${opt.key}',this.value||null);refresh()">
         </div>
         <div class="verbose-why">${opt.why}</div>
       </div>`;
@@ -1529,10 +1614,20 @@ function renderPostProc() {
     return;
   }
 
+  if (info.builtinPost) {
+    el.innerHTML = `<div class="check-group">
+    ${check('sortBam', 'Sort BAM by coordinate (--enable-sort)', 'Done in-line by DRAGEN; a .bai index is written alongside the sorted BAM')}
+    ${check('markDups', 'Mark duplicates (--enable-duplicate-marking)', 'DRAGEN\'s built-in duplicate marking; requires sorting')}
+    ${check('dragenVC', 'Call small variants (--enable-variant-caller)', 'Runs the DRAGEN germline SNV/indel caller in the same pass and writes a VCF')}
+  </div>`;
+    return;
+  }
+
   if (info.graphOutput) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
       GraphAligner outputs GAF format, not BAM. BAM conversion requires
-      <code>vg surject</code> — the align command includes a commented example.</p>`;
+      <code>vg surject</code> against a GBZ built from the same GFA
+      (<code>vg gbwt -g graph.gbz -G graph.gfa</code>) — the align command includes a commented example.</p>`;
     return;
   }
 
@@ -1618,6 +1713,16 @@ function buildAlignCmd() {
       lines.push(pipe(`bwa-mem2 mem -t ${T}${vf('bwa-mem2')} ${REF} ${reads}`));
       break;
 
+    case 'dragen': {
+      const inArg = S.paired ? `-1 ${R1} \\\n  -2 ${R2}` : `-1 ${R1}`;
+      const SM    = S.dragenSample || 'sample1';
+      const sort  = S.sortBam ? 'true' : 'false';
+      const dedup = S.markDups && S.sortBam ? 'true' : 'false';
+      lines.push(`mkdir -p ${OUT}_dragen`);
+      lines.push(`dragen -f \\\n  -r ${S.dragenRefDir} \\\n  ${inArg} \\\n  --RGID ${SM} \\\n  --RGSM ${SM} \\\n  --output-directory ${OUT}_dragen \\\n  --output-file-prefix ${OUT} \\\n  --enable-map-align true \\\n  --enable-map-align-output true \\\n  --output-format BAM \\\n  --enable-sort ${sort} \\\n  --enable-duplicate-marking ${dedup} \\\n  --enable-variant-caller ${S.dragenVC ? 'true' : 'false'}${vfml('dragen')}`);
+      break;
+    }
+
     case 'bwa-mem': {
       const xFlag   = S.tech === 'pacbio' ? ' -x pacbio' : S.tech === 'ont' ? ' -x ont2d' : '';
       const inReads = S.tech === 'illumina' ? reads : LONG;
@@ -1685,15 +1790,17 @@ function buildAlignCmd() {
 
     case 'vg-giraffe': {
       const inFlags = S.paired ? `-f ${R1} \\\n  -f ${R2}` : `-f ${R1}`;
-      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.min \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
+      lines.push(pipe(`vg giraffe \\\n  -Z ${S.vgIdxPrefix}.giraffe.gbz \\\n  -d ${S.vgIdxPrefix}.dist \\\n  -m ${S.vgIdxPrefix}.shortread.withzip.min \\\n  -z ${S.vgIdxPrefix}.shortread.zipcodes \\\n  ${inFlags} \\\n  --output-format SAM${vfml('vg-giraffe')} \\\n  -t ${T}`));
       break;
     }
 
     case 'graphaligner':
-      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf \\\n  --output-format GAF \\\n  -x vg${vfml('graphaligner')} \\\n  -t ${T}`);
+      lines.push(`GraphAligner \\\n  -g ${S.graphFile} \\\n  -f ${LONG} \\\n  -a ${OUT}.gaf${S.verboseMode && vOptsFor('graphaligner').preset ? '' : ' \\\n  -x vg'}${vfml('graphaligner')} \\\n  -t ${T}`);
       lines.push('');
-      lines.push(`# To convert GAF → BAM (requires a GBZ index for vg surject):`);
-      lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -F ${OUT}.gaf -b -t ${T} \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
+      lines.push(`# To convert GAF → BAM, build a GBZ from the SAME GFA used above,`);
+      lines.push(`# then surject the GAF onto the graph's reference paths:`);
+      lines.push(`# vg gbwt -g ${S.graphFile.replace(/\.gfa$/, '.gbz')} -G ${S.graphFile}`);
+      lines.push(`# vg surject -x ${S.graphFile.replace(/\.gfa$/, '.gbz')} \\\n#   -G -b -t ${T} ${OUT}.gaf \\\n#   | samtools sort -@ ${T} -o ${OUT}.bam`);
       break;
 
     default:
@@ -1701,7 +1808,7 @@ function buildAlignCmd() {
   }
 
   /* ── Post-processing ── */
-  const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput;
+  const isQuant = ALIGNERS[al]?.quantOnly || ALIGNERS[al]?.graphOutput || ALIGNERS[al]?.builtinPost;
   if (!isQuant) {
     const finalBam = S.markDups && S.sortBam ? `${OUT}.markdup.bam` : `${OUT}.bam`;
     const postLines = [];
@@ -1731,7 +1838,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner'];
+const TOOLS = ['bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
 
 function highlight(raw) {
   const e = raw
@@ -1766,12 +1873,14 @@ function buildNotes() {
   }
 
   // Sort required for markdup
-  if (S.markDups && !S.sortBam && !info.quantOnly) {
+  if (S.markDups && !S.sortBam && al === 'dragen') {
+    notes.push({ type: 'warn', text: '<strong>Sort required:</strong> DRAGEN duplicate marking requires <code>--enable-sort true</code>; it has been turned off in the command. Enable sorting above.' });
+  } else if (S.markDups && !S.sortBam && !info.quantOnly && !info.graphOutput) {
     notes.push({ type: 'warn', text: '<strong>Sort required:</strong> <code>samtools markdup</code> requires coordinate-sorted input. Enable "Sort BAM by coordinate" above.' });
   }
 
   // Paired-end recommended
-  if (!S.paired && ['bwa-mem2','bwa-mem','star','hisat2'].includes(al)) {
+  if (!S.paired && ['bwa-mem2','bwa-mem','dragen','star','hisat2'].includes(al)) {
     notes.push({ type: 'info', text: '<strong>Paired-end recommended:</strong> Most RNA-seq and WGS workflows use paired-end reads for better alignment accuracy and insert-size estimation.' });
   }
 
@@ -1788,6 +1897,16 @@ function buildNotes() {
   // BWA-MEM long read warning
   if (al === 'bwa-mem' && ['pacbio','ont'].includes(S.tech)) {
     notes.push({ type: 'warn', text: '<strong>Consider Minimap2:</strong> For PacBio and ONT long reads, Minimap2 generally provides higher accuracy and speed than BWA-MEM\'s long-read modes.' });
+  }
+
+  // DRAGEN gVCF without the variant caller
+  if (al === 'dragen' && S.verboseMode && vOptsFor('dragen').dgGvcf && !S.dragenVC) {
+    notes.push({ type: 'warn', text: '<strong>gVCF needs the variant caller:</strong> <code>--vc-emit-ref-confidence GVCF</code> has no effect unless "Call small variants" is enabled.' });
+  }
+
+  // DRAGEN licensing
+  if (al === 'dragen') {
+    notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
   }
 
   // Long reads + indexBam
@@ -2143,6 +2262,25 @@ ${bamOut('MM2')}${post('BAM')}
     MMI -.->|use in place of FASTA| MM2
     LR --> MM2`;
 
+    case 'dragen': {
+      const HT  = dl(S.dragenRefDir || 'dragen_hash_table');
+      const ODIR = `${OUT}_dragen/${OUT}`;
+      let tail = S.sortBam
+        ? `    BAM(["${ODIR}.bam + .bai"]):::out\n    DRG --> BAM\n`
+        : `    BAM(["${ODIR}.bam"]):::out\n    DRG --> BAM\n`;
+      if (S.dragenVC) tail += `    VCF(["${ODIR}.hard-filtered.vcf.gz"]):::out\n    DRG --> VCF\n`;
+      const steps = ['map/align', S.sortBam && 'sort', S.markDups && S.sortBam && 'dedup', S.dragenVC && 'call'].filter(Boolean).join(' → ');
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+${srIn}
+    HTB["dragen --build-hash-table"]:::tool
+    HTD(["${HT}/"]):::idx
+    DRG["dragen<br/>${steps}"]:::tool
+${tail}
+    REF --> HTB --> HTD --> DRG
+    ${srArr} --> DRG`;
+    }
+
     case 'vg-giraffe': {
       const VPFX = dl(S.vgIdxPrefix || 'graph_index');
       const VCF  = dl(S.vcfFile     || 'variants.vcf.gz');
@@ -2151,7 +2289,7 @@ ${bamOut('MM2')}${post('BAM')}
     VCF(["${VCF}"]):::file
 ${srIn}
     VAUTO["vg autoindex<br/>--workflow giraffe"]:::tool
-    GBZ(["${VPFX}.giraffe.gbz<br/>.dist  .min"]):::idx
+    GBZ(["${VPFX}.giraffe.gbz<br/>.dist  .min  .zipcodes"]):::idx
     VGG["vg giraffe -t ${T}"]:::tool
 ${bamOut('VGG')}${post('BAM')}
     REF --> VAUTO
@@ -2220,6 +2358,20 @@ function toggleCitations() {
 /* ── tiny XSS-safe escape for attribute values ── */
 function esc(s) { return (s||'').replace(/"/g,'&quot;'); }
 
+/* ── Migrate older saved state (e.g. removed 'pangenome' tech) ── */
+function migrateState() {
+  if (S.tech === 'pangenome') {
+    if (S.aligner === 'vg-giraffe')        S.tech = 'illumina';
+    else if (S.aligner === 'graphaligner') S.tech = 'pacbio';
+    else { S.tech = null; S.aligner = null; }
+  }
+  // Drop any tech/aligner combination that is no longer offered
+  const techs = TECH_OPTIONS[S.expType] || [];
+  if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
+  const a = ALIGNERS[S.aligner];
+  if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
+}
+
 /* ── Restore UI after state is loaded from hash/localStorage ── */
 function restoreUI() {
   if (S.expType) {
@@ -2277,7 +2429,7 @@ mermaid.initialize({
       if (saved.expType) { Object.assign(S, saved); restored = true; }
     } catch(e) {}
   }
-  if (restored) restoreUI();
+  if (restored) { migrateVOpts(); migrateState(); restoreUI(); }
   else refresh();
 })();
 </script>
