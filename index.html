@@ -596,6 +596,30 @@ header p  { opacity: 0.8; font-size: 1rem; }
             </td>
           </tr>
           <tr>
+            <td class="cite-tool">STARsolo</td>
+            <td class="cite-ref">
+              Kaminow B, Yunusov D, Dobin A. <em>STARsolo: accurate, fast and versatile mapping/quantification of single-cell and single-nucleus RNA-seq data.</em>
+              <span class="cite-journal">bioRxiv</span>, 2021.
+              <a href="https://doi.org/10.1101/2021.05.05.442755" target="_blank">doi:10.1101/2021.05.05.442755</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">alevin-fry / simpleaf</td>
+            <td class="cite-ref">
+              He D, et al. <em>Alevin-fry unlocks rapid, accurate and memory-frugal quantification of single-cell RNA-seq data.</em>
+              <span class="cite-journal">Nature Methods</span> 19, 316–322, 2022.
+              <a href="https://doi.org/10.1038/s41592-022-01408-3" target="_blank">doi:10.1038/s41592-022-01408-3</a>
+            </td>
+          </tr>
+          <tr>
+            <td class="cite-tool">kallisto | bustools</td>
+            <td class="cite-ref">
+              Melsted P, et al. <em>Modular, efficient and constant-memory single-cell RNA-seq preprocessing.</em>
+              <span class="cite-journal">Nature Biotechnology</span> 39, 813–818, 2021.
+              <a href="https://doi.org/10.1038/s41587-021-00870-2" target="_blank">doi:10.1038/s41587-021-00870-2</a>
+            </td>
+          </tr>
+          <tr>
             <td class="cite-tool">samtools</td>
             <td class="cite-ref">
               Danecek P, et al. <em>Twelve years of SAMtools and BCFtools.</em>
@@ -692,6 +716,14 @@ const S = {
   rgId:          '',
   rgLib:         '',
   rgPlatform:    '',   // '' = auto from S.tech
+  // Single-cell RNA-seq (10x / droplet)
+  scChem:        'v3',  // key of SC_CHEM
+  scWhitelist:   '',    // '' = default 10x whitelist file name for the chemistry
+  scNuclei:      false, // snRNA-seq: count intronic / unspliced reads too
+  scBam:         false, // STARsolo: also write a CB/UB-tagged BAM
+  afIdx:         'simpleaf_index',
+  kbIdx:         'kb_index.idx',
+  kbT2g:         't2g.txt',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -973,6 +1005,86 @@ const ALIGNERS = {
       note: 'Indexes the transcriptome FASTA — not the genome.',
     },
   },
+  'starsolo': {
+    label: 'STARsolo', tags: ['popular'],
+    dna: false, rna: true, quantOnly: true,
+    techs: ['singlecell'],
+    desc: 'STAR\'s built-in single-cell mode — genome alignment, barcode/UMI correction and cell × gene counting in one pass',
+    pros: [
+      'Reproduces Cell Ranger gene counts closely while running several times faster',
+      'Full splice-aware genome alignment — not limited to annotated transcripts',
+      'GeneFull (exon + intron) and Velocyto spliced/unspliced counts for snRNA-seq and RNA velocity',
+      'Optional coordinate-sorted BAM with corrected CB/UB tags for IGV, demultiplexing or variant calling',
+      'Reuses a standard STAR genome index — no separate single-cell reference',
+    ],
+    cons: [
+      'High memory (~32 GB for human), like bulk STAR',
+      'Many --solo* parameters; Cell Ranger-matching settings must be set explicitly',
+      'Slower than pseudoalignment tools (alevin-fry, kallisto | bustools)',
+    ],
+    best: '10x 3′/5′ scRNA-seq and snRNA-seq where a Cell Ranger-like result or a tagged BAM is wanted',
+    notes: [],
+    idx: {
+      cmd: s => ALIGNERS.star.idx.cmd(s) + `\n\n# For the closest match to Cell Ranger, build from Cell Ranger's refdata\n# (refdata-gex-*/fasta/genome.fa + genes/genes.gtf); optionally add\n# --genomeSAsparseD 3 (Cell Ranger's setting: fits in ~16 GB RAM, ~30–50% slower).`,
+      mem: '~32 GB', time: '~30–60 min (human genome)',
+      outputs: 'Standard STAR genome directory (same as bulk STAR)',
+      note: 'STARsolo uses an ordinary STAR genome index — reuse an existing one. Use the same filtered GTF as Cell Ranger (or one made with cellranger mkgtf) so gene sets match.',
+    },
+  },
+  'simpleaf': {
+    label: 'alevin-fry (simpleaf)', tags: ['fast','memory'],
+    dna: false, rna: true, quantOnly: true,
+    techs: ['singlecell'],
+    desc: 'Selective-alignment to a spliced + intronic (splici) reference; USA-mode spliced/unspliced/ambiguous counts',
+    pros: [
+      'Very fast and memory-frugal (piscem index; ~1/3 of STARsolo\'s RAM)',
+      'splici reference reports spliced / unspliced / ambiguous (USA) counts in one run — ready for snRNA-seq and RNA velocity',
+      'simpleaf wraps index + map + permit list + collate + quant into two commands',
+      'Registered 10x chemistries (3′ v2/v3/v4, 5′ v2/v3) with built-in permit lists; custom geometries supported',
+      'Writes an AnnData .h5ad directly with --anndata-out',
+    ],
+    cons: [
+      'No genome BAM output',
+      'Annotation-dependent — cannot count unannotated genes',
+      'Smaller user base than Cell Ranger / STARsolo; output layout differs from Cell Ranger',
+    ],
+    best: 'Fast, low-memory 10x scRNA/snRNA-seq quantification, RNA velocity, large atlases',
+    notes: [],
+    idx: {
+      cmd: s => `# simpleaf needs a home directory for its config / cached permit lists (once)\nexport ALEVIN_FRY_HOME="$PWD/af_home"\nsimpleaf set-paths\n\n# Build a spliced + intronic (splici) piscem index from genome + GTF\nsimpleaf index \\\n  --output ${s.afIdx} \\\n  --fasta ${s.ref} \\\n  --gtf annotation.gtf \\\n  --threads ${s.threads}\n# --rlen sets the read length the intronic flanks are sized for (default 91;\n# use the cDNA (R2) read length, e.g. 91 for v3, 98 for v2)`,
+      mem: '~16 GB', time: '~30–60 min (human genome)',
+      outputs: '${output}/index/ (piscem index + t2g_3col.tsv), ${output}/ref/ (splici FASTA)',
+      note: 'Builds a splici (spliced + intronic) reference from the genome FASTA and GTF, so every run reports spliced, unspliced and ambiguous counts. The 3-column t2g map is written next to the index and picked up automatically by simpleaf quant.',
+    },
+  },
+  'kb': {
+    label: 'kallisto | bustools (kb)', tags: ['fast','memory'],
+    dna: false, rna: true, quantOnly: true,
+    techs: ['singlecell'],
+    desc: 'Pseudoalignment to BUS records with kb-python — the fastest route from FASTQ to a cell × gene matrix',
+    pros: [
+      'Fastest and lowest-memory option; runs on a laptop for most datasets',
+      'kb ref / kb count wrap index building, barcode correction, UMI collapsing and matrix export',
+      'nac workflow gives mature / nascent / ambiguous matrices for snRNA-seq and velocity',
+      'Modular BUS format — easy to filter, re-count or swap the on-list',
+      'Writes .h5ad or .loom directly',
+    ],
+    cons: [
+      'No genome BAM output',
+      'Pseudoalignment is less accurate than alignment for reads from intronic or unannotated regions',
+      'Annotation-dependent — cannot count unannotated genes',
+    ],
+    best: 'Rapid, low-resource 10x scRNA/snRNA-seq quantification, exploratory analysis, teaching',
+    notes: [],
+    idx: {
+      cmd: s => s.scNuclei
+        ? `# nac index: mature (cDNA) + nascent (unprocessed) transcripts\nkb ref --workflow nac \\\n  -i ${s.kbIdx} \\\n  -g ${s.kbT2g} \\\n  -c1 cdna_t2c.txt \\\n  -c2 nascent_t2c.txt \\\n  -f1 cdna.fa \\\n  -f2 nascent.fa \\\n  -t ${s.threads} \\\n  ${s.ref} annotation.gtf`
+        : `# Standard index: cDNA (mature transcripts) from genome + GTF\nkb ref \\\n  -i ${s.kbIdx} \\\n  -g ${s.kbT2g} \\\n  -f1 cdna.fa \\\n  -t ${s.threads} \\\n  ${s.ref} annotation.gtf\n\n# For snRNA-seq / velocity, enable "single-nucleus" above to build a nac index instead`,
+      mem: '~4 GB (standard), ~16 GB (nac)', time: '~5–15 min (standard), ~30 min (nac)',
+      outputs: 'kallisto .idx, t2g.txt, cdna.fa (+ nascent.fa, cdna_t2c.txt, nascent_t2c.txt for nac)',
+      note: 'kb ref extracts transcript sequences from the genome FASTA + GTF and builds the kallisto index. The nac workflow also indexes nascent (unprocessed) transcripts; its -c1/-c2 capture lists are needed again by kb count.',
+    },
+  },
   'minimap2-rna': {
     label: 'Minimap2 (long-read RNA)', tags: ['fast'],
     dna: false, rna: true, quantOnly: false,
@@ -1072,8 +1184,25 @@ const TECH_OPTIONS = {
     { val: 'illumina', label: 'Illumina Short Reads',      desc: 'Standard RNA-seq, 75–150 bp paired-end reads' },
     { val: 'longrna',  label: 'Long-Read RNA-seq',         desc: 'PacBio Iso-Seq or ONT direct RNA / cDNA sequencing' },
     { val: 'quantonly',label: 'Quantification Only',       desc: 'Skip genome alignment — directly estimate transcript abundance' },
+    { val: 'singlecell', label: 'Single-cell (10x / droplet)', desc: 'scRNA-seq / snRNA-seq with cell barcodes + UMIs → cell × gene count matrix' },
   ],
 };
+
+/* ═══════════════════════════════════════════════════
+   SINGLE-CELL CHEMISTRIES (10x Chromium)
+═══════════════════════════════════════════════════ */
+// cb/umi: barcode-read geometry (CB at 1..cb, UMI right after); wl: 10x whitelist file
+// (Cell Ranger lib/python/cellranger/barcodes/, gunzip first); af: simpleaf chemistry;
+// kb: kb-python technology; five: 5′ kit — the R2 cDNA read is antisense to the RNA
+const SC_CHEM = {
+  'v2':  { label: '10x 3′ v2',               cb: 16, umi: 10, wl: '737K-august-2016.txt',  af: '10xv2',    kb: '10XV2', five: false },
+  'v3':  { label: '10x 3′ v3 / v3.1',        cb: 16, umi: 12, wl: '3M-february-2018.txt',  af: '10xv3',    kb: '10XV3', five: false },
+  'v4':  { label: '10x 3′ v4 (GEM-X)',       cb: 16, umi: 12, wl: '3M-3pgex-may-2023.txt', af: '10xv4-3p', kb: '10XV4', five: false },
+  '5v2': { label: '10x 5′ v1.1 / v2 (R2 only)', cb: 16, umi: 10, wl: '737K-august-2016.txt',  af: '10xv2-5p', kb: '10XV2', five: true },
+  '5v3': { label: '10x 5′ v3 (GEM-X, R2 only)', cb: 16, umi: 12, wl: '3M-5pgex-jan-2023.txt', af: '10xv3-5p', kb: '10XV3', five: true },
+};
+function scChem() { return SC_CHEM[S.scChem] || SC_CHEM['v3']; }
+function scWL()   { return (S.scWhitelist || '').trim() || scChem().wl; }
 
 /* ═══════════════════════════════════════════════════
    VERBOSE OPTIONS DATABASE
@@ -1231,6 +1360,51 @@ const VERBOSE_OPTS = {
       why: 'Learns and corrects a sequence-specific bias model. Similar to Salmon\'s --seqBias. Recommended for libraries showing strong positional bias at fragment start sites.',
       cmd: () => '--bias' },
   ],
+  'starsolo': [
+    { key: 'cellFilter', type: 'select', flag: '--soloCellFilter', label: 'Cell calling (filtered matrix)',
+      options: [
+        { val: '',              label: 'EmptyDrops_CR — Cell Ranger ≥3 style (used here)' },
+        { val: 'CellRanger2.2', label: 'CellRanger2.2 — simple knee filter (STAR default)' },
+        { val: 'None',          label: 'None — raw matrix only' },
+      ],
+      why: 'Decides which barcodes are written to Solo.out/*/filtered/. EmptyDrops_CR matches Cell Ranger 3+ and recovers low-RNA cells; the raw/ matrix is always written, so you can re-call cells later (e.g. with STAR --runMode soloCellFiltering or DropletUtils).',
+      cmd: v => `--soloCellFilter ${v}` },
+    { key: 'multi', type: 'select', flag: '--soloMultiMappers', label: 'Multi-gene read recovery',
+      options: [
+        { val: '',           label: '— Unique only (default, Cell Ranger-like) —' },
+        { val: 'EM',         label: 'EM — expectation-maximization' },
+        { val: 'Uniform',    label: 'Uniform — split evenly across genes' },
+        { val: 'PropUnique', label: 'PropUnique — proportional to unique counts' },
+        { val: 'Rescue',     label: 'Rescue — first EM step' },
+      ],
+      why: 'By default (like Cell Ranger) reads mapping to several genes are dropped. Recovering them adds UniqueAndMult-*.mtx matrices and improves counts for paralogous / overlapping genes. EM is the usual choice.',
+      cmd: v => `--soloMultiMappers ${v}` },
+  ],
+  'simpleaf': [
+    { key: 'res', type: 'select', flag: '--resolution', label: 'UMI resolution',
+      options: [
+        { val: '',                 label: 'cr-like — Cell Ranger-like (used here)' },
+        { val: 'cr-like-em',       label: 'cr-like-em — plus EM for multi-gene UMIs' },
+        { val: 'parsimony',        label: 'parsimony — graph-based UMI deduplication' },
+        { val: 'parsimony-em',     label: 'parsimony-em — parsimony plus EM' },
+      ],
+      why: 'How UMIs that map to several genes are resolved. cr-like discards gene-ambiguous UMIs like Cell Ranger; the -em variants distribute them by EM, recovering counts for paralogs. parsimony also corrects UMI sequencing errors via a UMI graph.',
+      cmd: v => `--resolution ${v}` },
+    { key: 'minReads', type: 'val', flag: '--min-reads', label: 'Minimum reads per barcode', defaultVal: '10',
+      why: 'With an unfiltered permit list, barcodes with fewer reads than this are discarded before quantification (default 10). Raise it to shrink output size; cells are still called downstream (e.g. EmptyDrops on the full matrix).',
+      cmd: v => `--min-reads ${v}` },
+  ],
+  'kb': [
+    { key: 'filter', type: 'check', flag: '--filter bustools', label: 'Write a filtered (cell-called) matrix',
+      why: 'Also writes counts_filtered/ with only barcodes that pass bustools\' knee-based cell calling. The unfiltered matrix is always kept; many pipelines prefer to call cells themselves (EmptyDrops) from counts_unfiltered/.',
+      cmd: () => '--filter bustools' },
+    { key: 'cr', type: 'check', flag: '--cellranger', label: 'Cell Ranger-compatible output',
+      why: 'Writes matrix.mtx / barcodes.tsv / genes.tsv in Cell Ranger\'s layout (gzipped) so tools expecting a Cell Ranger directory (Seurat Read10X, scanpy read_10x_mtx) can load it directly.',
+      cmd: () => '--cellranger' },
+    { key: 'mem', type: 'val', flag: '-m', label: 'Maximum memory', defaultVal: '4G',
+      why: 'Memory cap for bustools sort (default 2G for standard, 4G for nac). Raise it on large runs to cut temporary-file I/O.',
+      cmd: v => `-m ${v}` },
+  ],
   'vg-giraffe': [
     { key: 'multimaps', type: 'val', flag: '--max-multimaps', label: 'Max alignments per read', defaultVal: '1',
       why: 'Default 1 reports only the primary alignment. Raising it also emits up to N−1 secondary alignments per read — useful for inspecting multi-mapping reads, but most variant-calling pipelines expect the default.',
@@ -1357,10 +1531,11 @@ function renderParams() {
 
   const isLong  = ['pacbio','ont','longrna'].includes(S.tech);
   const isQuant = info.quantOnly;
+  const isSC    = S.tech === 'singlecell';
 
   /* ---------- reference/index field ---------- */
   let refField = '';
-  if (al === 'star') {
+  if (al === 'star' || al === 'starsolo') {
     refField = field('STAR Genome Directory', `<input type="text" value="${esc(S.genomeDir)}" oninput="S.genomeDir=this.value;refresh()">`) +
                field('Reference FASTA', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`) +
                field('Genome size (Gb) <span style="font-weight:400;color:var(--muted)">for --genomeSAindexNbases</span>', `<input type="number" min="0.001" step="0.1" value="${esc(S.genomeSizeGb)}" placeholder="e.g. 3.1 for human, 0.12 for mouse chr1" oninput="S.genomeSizeGb=this.value;refresh()">`);
@@ -1371,6 +1546,13 @@ function renderParams() {
     const idxName = al === 'salmon' ? 'Salmon Index Dir' : 'Kallisto Index (.idx)';
     refField = field(idxName, `<input type="text" value="${esc(idxVal)}" oninput="S.${idxKey}=this.value;refresh()">`) +
                field('Transcriptome FASTA', `<input type="text" value="${esc(S.txomeFa)}" oninput="S.txomeFa=this.value;refresh()">`);
+  } else if (al === 'simpleaf') {
+    refField = field('simpleaf Index Dir', `<input type="text" value="${esc(S.afIdx)}" oninput="S.afIdx=this.value;refresh()">`) +
+               field('Genome FASTA <span style="font-weight:400;color:var(--muted)">(for index build, + annotation.gtf)</span>', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`);
+  } else if (al === 'kb') {
+    refField = field('kallisto Index (.idx)', `<input type="text" value="${esc(S.kbIdx)}" oninput="S.kbIdx=this.value;refresh()">`) +
+               field('Transcript → gene map', `<input type="text" value="${esc(S.kbT2g)}" oninput="S.kbT2g=this.value;refresh()">`) +
+               field('Genome FASTA <span style="font-weight:400;color:var(--muted)">(for kb ref, + annotation.gtf)</span>', `<input type="text" value="${esc(S.ref)}" oninput="S.ref=this.value;refresh()">`);
   } else if (['bowtie2','hisat2'].includes(al)) {
     refField = field('Index Prefix', `<input type="text" value="${esc(S.refIdx)}" oninput="S.refIdx=this.value;refresh()">`);
   } else if (al === 'dragen') {
@@ -1389,14 +1571,17 @@ function renderParams() {
   }
 
   /* ---------- read fields ---------- */
-  const pairedSel = !isLong ? `<div class="field"><label>Read Layout</label>
+  const pairedSel = !isLong && !isSC ? `<div class="field"><label>Read Layout</label>
     <select onchange="S.paired=(this.value==='paired');renderParams();renderPostProc();refresh()">
       <option value="paired"  ${S.paired ?'selected':''}>Paired-end (R1 + R2)</option>
       <option value="single"  ${!S.paired?'selected':''}>Single-end</option>
     </select></div>` : '';
 
   let readFields = '';
-  if (!isLong) {
+  if (isSC) {
+    readFields = field('Read 1 (R1) — cell barcode + UMI', `<input type="text" value="${esc(S.r1)}" oninput="S.r1=this.value;refresh()">`)
+               + field('Read 2 (R2) — cDNA', `<input type="text" value="${esc(S.r2)}" oninput="S.r2=this.value;refresh()">`);
+  } else if (!isLong) {
     readFields = field('Read 1 (R1)', `<input type="text" value="${esc(S.r1)}" oninput="S.r1=this.value;refresh()">`)
                + (S.paired ? field('Read 2 (R2)', `<input type="text" value="${esc(S.r2)}" oninput="S.r2=this.value;refresh()">`) : '');
   } else {
@@ -1405,7 +1590,21 @@ function renderParams() {
 
   /* ---------- aligner-specific options ---------- */
   let extraOpts = '';
-  if (al === 'star') {
+  if (isSC && SC_ALIGNERS.includes(al)) {
+    const ch = scChem();
+    extraOpts = `<div class="param-grid" style="margin-top:1rem;">
+      <div class="field"><label>10x chemistry</label>
+        <select onchange="S.scChem=this.value;renderParams();refresh()">
+          ${Object.entries(SC_CHEM).map(([k, c]) => `<option value="${k}" ${S.scChem===k?'selected':''}>${c.label}</option>`).join('')}
+        </select>
+      </div>
+      ${field('Barcode whitelist <span style="font-weight:400;color:var(--muted)">default: ' + ch.wl + '</span>', `<input type="text" value="${esc(S.scWhitelist)}" placeholder="${esc(ch.wl)}" oninput="S.scWhitelist=this.value;refresh()">`)}
+    </div>
+    <div class="note info" style="margin-top:0.5rem;font-size:0.8rem;">Barcode read: ${ch.cb} bp cell barcode + ${ch.umi} bp UMI. The whitelist ships with Cell Ranger in <code>lib/python/cellranger/barcodes/</code> (<code>${ch.wl}</code>, gunzip if it ends in .gz) and must match the kit chemistry.${ch.five ? ' 5′ kits: only R2 is quantified, as an antisense read.' : ''}</div>
+    <div class="check-group" style="margin-top:1rem;">
+      ${checkR('scNuclei', 'Single-nucleus RNA-seq (count intronic reads)', al === 'starsolo' ? 'Adds --soloFeatures GeneFull (exon + intron counts) next to Gene' : al === 'simpleaf' ? 'splici index already reports spliced / unspliced / ambiguous counts; sum all three for nuclei' : 'Builds a nac index and runs kb count --workflow nac --sum total')}
+    </div>`;
+  } else if (al === 'star') {
     extraOpts = `<div class="check-group" style="margin-top:1.1rem;">
       ${check('starTwoPass', '2-pass mode', 'Runs STAR twice; improves sensitivity for novel splice junctions at the cost of ~2× runtime')}
       ${check('starQuantMode', 'Gene count output (--quantMode GeneCounts)', 'Output per-gene read counts alongside the BAM; convenient for DE analysis')}
@@ -1460,7 +1659,9 @@ function renderParams() {
 
 /* ── Sample / read group (shared by all BAM-producing aligners) ── */
 // Aligners with no SAM/BAM @RG header to attach a read group to
-const RG_NONE = ['salmon','kallisto','graphaligner'];
+const RG_NONE = ['salmon','kallisto','graphaligner','starsolo','simpleaf','kb'];
+// Single-cell aligners (count matrix output; read 1 = barcode/UMI, read 2 = cDNA)
+const SC_ALIGNERS = ['starsolo','simpleaf','kb'];
 // DNA aligners whose output usually feeds GATK / DeepVariant (warn when RG is empty)
 const RG_VARIANT = ['bwa-mem2','bwa-mem','bowtie2','minimap2-pb','minimap2-ont','vg-giraffe'];
 const RG_PLATFORMS = ['ILLUMINA','PACBIO','ONT','ELEMENT','ULTIMA','DNBSEQ','IONTORRENT'];
@@ -1530,6 +1731,14 @@ function renderReadGroup() {
 
 function field(label, inputHtml) {
   return `<div class="field"><label>${label}</label>${inputHtml}</div>`;
+}
+
+// check() variant that re-renders params + post-proc (for toggles that change the form)
+function checkR(key, label, desc) {
+  return `<label class="check-item">
+    <input type="checkbox" ${S[key]?'checked':''} onchange="S.${key}=this.checked;renderParams();renderPostProc();refresh()">
+    <div><div class="check-label">${label}</div><div class="check-desc">${desc}</div></div>
+  </label>`;
 }
 
 function check(key, label, desc) {
@@ -1674,6 +1883,16 @@ function renderPostProc() {
   const info = ALIGNERS[S.aligner];
   if (!info) { el.innerHTML = ''; return; }
 
+  if (SC_ALIGNERS.includes(S.aligner)) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
+      Single-cell tools write a cell × gene count matrix (Matrix Market / h5ad), not a BAM —
+      samtools post-processing does not apply. Load it with Seurat, scanpy or similar; call cells
+      and remove ambient RNA / doublets downstream.</p>` + (S.aligner === 'starsolo' ? `<div class="check-group" style="margin-top:0.75rem;">
+      ${check('scBam', 'Also write a BAM with cell / UMI tags', 'Coordinate-sorted Aligned.sortedByCoord.out.bam with CB/UB (corrected) and GX/GN tags — for IGV, souporcell, velocyto or variant calling. Adds runtime and disk.')}
+    </div>` : '');
+    return;
+  }
+
   if (info.quantOnly) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.875rem;">
       Quantification-only tools (Salmon, Kallisto) produce abundance tables, not BAM files.
@@ -1758,6 +1977,10 @@ function buildQCCmd() {
 
   if (S.tech === 'pacbio') {
     return `# PacBio QC — FastQC for a quick report\nfastqc -t ${T} ${S.reads} -o ${OUT}_fastqc/`;
+  }
+
+  if (S.tech === 'singlecell') {
+    return `# Single-cell QC — report only, NO trimming.\n# R1 is a fixed-length barcode + UMI read: trimming or filtering it breaks\n# cell/UMI assignment and desynchronises R1/R2. STARsolo, simpleaf and kb\n# handle adapters / poly-A internally.\nmkdir -p ${OUT}_fastqc\nfastqc -t ${T} -o ${OUT}_fastqc/ \\\n  ${S.r1} ${S.r2}\n\n# Aggregate with MultiQC (also parses STARsolo / alevin-fry logs)\n# multiqc ${OUT}_fastqc/ -o ${OUT}_multiqc/`;
   }
 
   // Illumina short reads — fastp (recommended: trim + QC in one pass)
@@ -1885,6 +2108,72 @@ function buildAlignCmd() {
       break;
     }
 
+    case 'starsolo': {
+      const ch = scChem();
+      const gz = (R2 || '').endsWith('.gz');
+      const vo = S.verboseMode ? vOptsFor('starsolo') : {};
+      let c = `STAR --runThreadN ${T} \\\n  --genomeDir ${S.genomeDir}`;
+      c += ` \\\n  --readFilesIn ${R2} ${R1}`;   // cDNA read first, barcode read last
+      if (gz) c += ` \\\n  --readFilesCommand zcat`;
+      c += ` \\\n  --soloType CB_UMI_Simple`;
+      c += ` \\\n  --soloCBwhitelist ${scWL()}`;
+      c += ` \\\n  --soloCBstart 1 \\\n  --soloCBlen ${ch.cb} \\\n  --soloUMIstart ${ch.cb + 1} \\\n  --soloUMIlen ${ch.umi}`;
+      c += ` \\\n  --soloBarcodeReadLength 0`;
+      if (ch.five) c += ` \\\n  --soloStrand Reverse`;
+      else         c += ` \\\n  --clipAdapterType CellRanger4 \\\n  --outFilterScoreMin 30`;
+      c += ` \\\n  --soloCBmatchWLtype 1MM_multi_Nbase_pseudocounts \\\n  --soloUMIfiltering MultiGeneUMI_CR \\\n  --soloUMIdedup 1MM_CR`;
+      c += ` \\\n  --soloFeatures ${S.scNuclei ? 'Gene GeneFull' : 'Gene'}`;
+      if (!vo.cellFilter) c += ` \\\n  --soloCellFilter EmptyDrops_CR`;
+      c += S.scBam
+        ? ` \\\n  --outSAMtype BAM SortedByCoordinate \\\n  --outSAMattributes NH HI nM AS CR UR CB UB GX GN sS sQ sM`
+        : ` \\\n  --outSAMtype None`;
+      c += vfml('starsolo');
+      c += ` \\\n  --outFileNamePrefix ${OUT}/`;
+      lines.push(`# Counts: ${OUT}/Solo.out/Gene${S.scNuclei ? 'Full' : ''}/{raw,filtered}/ (matrix.mtx, barcodes.tsv, features.tsv)`);
+      lines.push(c);
+      if (S.scBam) {
+        lines.push('');
+        lines.push(`samtools index -@ ${T} ${OUT}/Aligned.sortedByCoord.out.bam`);
+      }
+      break;
+    }
+
+    case 'simpleaf': {
+      const ch = scChem();
+      const vo = S.verboseMode ? vOptsFor('simpleaf') : {};
+      lines.push(`export ALEVIN_FRY_HOME="$PWD/af_home"   # same as for simpleaf index`);
+      let c = `simpleaf quant \\\n  --reads1 ${R1} \\\n  --reads2 ${R2}`;
+      c += ` \\\n  --index ${S.afIdx}/index`;
+      c += ` \\\n  --chemistry ${ch.af}`;
+      if (!vo.res) c += ` \\\n  --resolution cr-like`;
+      c += ` \\\n  --unfiltered-pl ${scWL()}`;
+      c += vfml('simpleaf');
+      c += ` \\\n  --anndata-out \\\n  --threads ${T} \\\n  --output ${OUT}_simpleaf`;
+      lines.push(c);
+      lines.push('');
+      lines.push(`# Counts: ${OUT}_simpleaf/af_quant/ — spliced (S), unspliced (U), ambiguous (A) layers`);
+      lines.push(S.scNuclei
+        ? `# snRNA-seq: use S + U + A — fishpond::loadFry(outputFormat = "snRNA") or pyroe load_fry(output_format = "snRNA")`
+        : `# scRNA-seq: use S + A — fishpond::loadFry(outputFormat = "scRNA") or pyroe load_fry(output_format = "scRNA")`);
+      break;
+    }
+
+    case 'kb': {
+      const ch = scChem();
+      let c = `kb count${S.scNuclei ? ' --workflow nac' : ''} \\\n  -i ${S.kbIdx} \\\n  -g ${S.kbT2g}`;
+      if (S.scNuclei) c += ` \\\n  -c1 cdna_t2c.txt \\\n  -c2 nascent_t2c.txt \\\n  --sum total`;
+      c += ` \\\n  -x ${ch.kb} \\\n  -w ${scWL()}`;
+      if (ch.five) c += ` \\\n  --strand reverse`;
+      c += vfml('kb');
+      c += ` \\\n  --h5ad \\\n  -t ${T} \\\n  -o ${OUT}_kb \\\n  ${R1} ${R2}`;
+      lines.push(c);
+      lines.push('');
+      lines.push(S.scNuclei
+        ? `# Counts: ${OUT}_kb/counts_unfiltered/ — mature, nascent, ambiguous + total (sum) matrices`
+        : `# Counts: ${OUT}_kb/counts_unfiltered/cells_x_genes.mtx (+ adata.h5ad)`);
+      break;
+    }
+
     case 'minimap2-rna':
       lines.push('# Use -ax splice:hq for PacBio Iso-Seq; -ax splice for ONT cDNA/direct-RNA');
       lines.push(pipe(`minimap2 -ax splice:hq${rgf('minimap2-rna')}${vf('minimap2-rna')} -t ${T} ${REF} ${LONG}`));
@@ -1977,7 +2266,7 @@ function buildAlignCmd() {
 /* ═══════════════════════════════════════════════════
    SYNTAX HIGHLIGHT
 ═══════════════════════════════════════════════════ */
-const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen'];
+const TOOLS = ['mosdepth','bwa-mem2','bwa','bowtie2-build','bowtie2','minimap2','STAR','hisat2-build','hisat2','salmon','kallisto','samtools','fastp','fastqc','trim_galore','NanoStat','NanoFilt','vg','GraphAligner','dragen','simpleaf','kb'];
 
 function highlight(raw) {
   const e = raw
@@ -2053,6 +2342,26 @@ function buildNotes() {
   // DRAGEN licensing
   if (al === 'dragen') {
     notes.push({ type: 'info', text: '<strong>Licensed hardware:</strong> this command runs on a DRAGEN server or a licensed cloud instance. The open-source <a href="https://github.com/Illumina/DRAGMAP" target="_blank">DRAGMAP</a> reimplements the DRAGEN mapper on commodity CPUs (alignment only, no variant calling).' });
+  }
+
+  // Single-cell (10x / droplet)
+  if (SC_ALIGNERS.includes(al)) {
+    const ch = scChem();
+    notes.push({ type: 'info', text: '<strong>Cell Ranger is the reference implementation:</strong> 10x\'s <code>cellranger count</code> (free to download, 10x chemistries only) wraps STAR and is what these tools are benchmarked against. STARsolo with the Cell Ranger-matching flags used here gives near-identical counts; alevin-fry and kallisto | bustools are much faster and lighter at a small accuracy cost for intronic / multi-gene reads.' });
+    notes.push({ type: 'warn', text: `<strong>Chemistry must match the kit:</strong> ${ch.label} expects R1 = ${ch.cb} bp barcode + ${ch.umi} bp UMI and the <code>${ch.wl}</code> whitelist. A wrong chemistry or whitelist silently gives few valid barcodes — check the "valid barcodes" rate in the tool\'s summary (aim for &gt;90%). Whitelists are in Cell Ranger\'s <code>lib/python/cellranger/barcodes/</code> (gunzip <code>.txt.gz</code> files) or can be downloaded from 10x.` });
+    if (ch.five) {
+      notes.push({ type: 'info', text: '<strong>5′ libraries:</strong> only R2 is quantified, as an antisense read (STARsolo <code>--soloStrand Reverse</code>, kb <code>--strand reverse</code>, simpleaf <code>' + ch.af + '</code>). If R1 is longer than barcode + UMI it also carries 5′ cDNA; STARsolo can use it as a paired mate with <code>--soloBarcodeMate 1 --clip5pNbases 39 0</code>.' });
+    }
+    if (S.scNuclei) {
+      notes.push({ type: 'info', text: al === 'starsolo'
+        ? '<strong>snRNA-seq:</strong> use the <code>Solo.out/GeneFull/</code> matrix (exon + intron); nuclear RNA is mostly unspliced, so the <code>Gene</code> matrix undercounts. Add <code>Velocyto</code> to <code>--soloFeatures</code> for spliced/unspliced layers.'
+        : al === 'simpleaf'
+        ? '<strong>snRNA-seq:</strong> the splici index already gives spliced / unspliced / ambiguous (USA) counts; for nuclei sum all three (loadFry / load_fry <code>"snRNA"</code> format).'
+        : '<strong>snRNA-seq:</strong> the nac workflow quantifies mature and nascent RNA; <code>--sum total</code> adds mature + nascent + ambiguous, the usual matrix for nuclei. Build the index with the same nac workflow (Index tab).' });
+    }
+    if (al === 'starsolo' && S.scBam) {
+      notes.push({ type: 'info', text: '<strong>Tagged BAM:</strong> corrected <code>CB</code>/<code>UB</code> tags require <code>--outSAMtype BAM SortedByCoordinate</code>; the BAM can be several times larger than the FASTQs. Leave it off if you only need counts.' });
+    }
   }
 
   const bamPost = !info.quantOnly && !info.graphOutput && !info.builtinPost;
@@ -2193,7 +2502,7 @@ function downloadScript() {
     lines.push(`READS="${S.reads || 'sample.fastq.gz'}"`);
   } else {
     lines.push(`R1="${S.r1 || 'sample_R1.fastq.gz'}"`);
-    if (S.paired) lines.push(`R2="${S.r2 || 'sample_R2.fastq.gz'}"`);
+    if (S.paired || S.tech === 'singlecell') lines.push(`R2="${S.r2 || 'sample_R2.fastq.gz'}"`);
   }
   lines.push(`OUTPUT="${S.output || 'output'}"`);
   lines.push('');
@@ -2444,6 +2753,78 @@ ${srIn}
     ${srArr} --> KQUANT
     KQUANT --> QOUT`;
 
+    case 'starsolo': {
+      const ch = scChem();
+      const WL = dl(scWL());
+      const feat = S.scNuclei ? 'Gene + GeneFull' : 'Gene';
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    GTF(["annotation.gtf"]):::file
+    R1(["${R1}<br/>CB ${ch.cb} + UMI ${ch.umi}"]):::file
+    R2(["${R2}<br/>cDNA"]):::file
+    WL(["${WL}"]):::file
+    SGEN["STAR genomeGenerate"]:::tool
+    GDIR2(["${GDIR}/"]):::idx
+    SOLO["STARsolo<br/>CB_UMI_Simple · ${feat}"]:::tool
+    MTX(["${OUT}/Solo.out/<br/>raw + filtered<br/>matrix.mtx"]):::out
+    REF --> SGEN
+    GTF --> SGEN
+    SGEN --> GDIR2 --> SOLO
+    R2 --> SOLO
+    R1 --> SOLO
+    WL -.->|whitelist| SOLO
+    SOLO --> MTX${S.scBam ? `
+    SBAM(["Aligned.sortedByCoord.out.bam<br/>CB / UB tags"]):::out
+    SOLO --> SBAM` : ''}`;
+    }
+
+    case 'simpleaf': {
+      const ch = scChem();
+      const AIDX = dl(S.afIdx || 'simpleaf_index');
+      const WL = dl(scWL());
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    GTF(["annotation.gtf"]):::file
+    R1(["${R1}<br/>CB ${ch.cb} + UMI ${ch.umi}"]):::file
+    R2(["${R2}<br/>cDNA"]):::file
+    WL(["${WL}"]):::file
+    AIND["simpleaf index<br/>splici reference"]:::tool
+    AIDXF(["${AIDX}/index/<br/>+ t2g_3col.tsv"]):::idx
+    AQ["simpleaf quant<br/>--chemistry ${ch.af}"]:::tool
+    AOUT(["${OUT}_simpleaf/af_quant/<br/>S / U / A counts<br/>quants.h5ad"]):::out
+    REF --> AIND
+    GTF --> AIND
+    AIND --> AIDXF --> AQ
+    R1 --> AQ
+    R2 --> AQ
+    WL -.->|unfiltered permit list| AQ
+    AQ --> AOUT`;
+    }
+
+    case 'kb': {
+      const ch = scChem();
+      const KBI = dl(S.kbIdx || 'kb_index.idx');
+      const WL = dl(scWL());
+      const nac = S.scNuclei;
+      return `flowchart LR\n${C}
+    REF(["${REF}"]):::file
+    GTF(["annotation.gtf"]):::file
+    R1(["${R1}<br/>CB ${ch.cb} + UMI ${ch.umi}"]):::file
+    R2(["${R2}<br/>cDNA"]):::file
+    WL(["${WL}"]):::file
+    KREF["kb ref${nac ? ' --workflow nac' : ''}"]:::tool
+    KBIX(["${KBI}<br/>t2g${nac ? ' + t2c lists' : ''}"]):::idx
+    KC["kb count -x ${ch.kb}${nac ? '<br/>--workflow nac --sum total' : ''}"]:::tool
+    KOUT(["${OUT}_kb/counts_unfiltered/<br/>${nac ? 'mature / nascent / ambiguous / total' : 'cells_x_genes.mtx'}"]):::out
+    REF --> KREF
+    GTF --> KREF
+    KREF --> KBIX --> KC
+    R1 --> KC
+    R2 --> KC
+    WL -.->|on-list| KC
+    KC --> KOUT`;
+    }
+
     case 'minimap2-rna':
       return `flowchart LR\n${C}
     REF(["${REF}"]):::file
@@ -2567,6 +2948,7 @@ function migrateState() {
   if (S.tech && !techs.some(t => t.val === S.tech)) { S.tech = null; S.aligner = null; }
   const a = ALIGNERS[S.aligner];
   if (S.aligner && (!a || !a.techs.includes(S.tech) || !a[S.expType])) S.aligner = null;
+  if (!SC_CHEM[S.scChem]) S.scChem = 'v3';
 }
 
 /* ── Carry legacy per-aligner read-group settings into the shared RG fields ── */
