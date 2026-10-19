@@ -692,6 +692,8 @@ const S = {
   rgId:          '',
   rgLib:         '',
   rgPlatform:    '',   // '' = auto from S.tech
+  // Reference genome preset (guidance only; 'custom' = leave paths alone)
+  refPreset:     'custom',
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1439,6 +1441,7 @@ function renderParams() {
   el.innerHTML = `
     <div class="param-grid">
       ${field('Threads / CPUs', `<input type="number" min="1" max="256" value="${S.threads}" oninput="S.threads=this.value;refresh()">`)}
+      ${refPresetField()}
       ${refField}
       ${field('Output Prefix', `<input type="text" value="${esc(S.output)}" oninput="S.output=this.value;refresh()">`)}
       ${pairedSel}
@@ -1998,6 +2001,41 @@ function highlight(raw) {
 }
 
 /* ═══════════════════════════════════════════════════
+   REFERENCE GENOME PRESETS (guidance notes only)
+═══════════════════════════════════════════════════ */
+// `file` is a conventional local filename; it only replaces S.ref when that is
+// still the default or another preset's filename, so custom paths survive.
+const REF_PRESETS = {
+  custom:       { label: 'Custom (use my own paths)', file: null },
+  grch38_noalt: { label: 'GRCh38 — no-alt analysis set (recommended)', file: 'GCA_000001405.15_GRCh38_no_alt_analysis_set.fna', human: true },
+  grch38_full:  { label: 'GRCh38 — full assembly with ALT contigs', file: 'Homo_sapiens_assembly38.fasta', human: true, alts: true },
+  t2t:          { label: 'T2T-CHM13v2.0 (hs1)', file: 'chm13v2.0_maskedY_rCRS.fa', human: true },
+  grcm39:       { label: 'GRCm39 (mouse)', file: 'GRCm39.primary_assembly.genome.fa' },
+};
+// Aligners that can handle GRCh38 ALT contigs given the right index files
+const REF_ALT_AWARE = ['bwa-mem2','bwa-mem','dragen'];
+
+function refPresetKey() { return REF_PRESETS[S.refPreset] ? S.refPreset : 'custom'; }
+
+function refPresetField() {
+  const cur = refPresetKey();
+  const opts = Object.entries(REF_PRESETS)
+    .map(([k, p]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${p.label}</option>`).join('');
+  return field('Reference genome <span style="font-weight:400;color:var(--muted)">(guidance)</span>',
+    `<select onchange="setRefPreset(this.value)">${opts}</select>`);
+}
+
+function setRefPreset(key) {
+  S.refPreset = REF_PRESETS[key] ? key : 'custom';
+  const file = REF_PRESETS[S.refPreset].file;
+  const presetFiles = Object.values(REF_PRESETS).map(p => p.file).filter(Boolean);
+  if (file && (!S.ref || S.ref === 'reference.fa' || presetFiles.includes(S.ref))) S.ref = file;
+  renderParams();
+  renderPostProc();
+  refresh();
+}
+
+/* ═══════════════════════════════════════════════════
    BUILD DYNAMIC ANALYSIS NOTES
 ═══════════════════════════════════════════════════ */
 function buildNotes() {
@@ -2074,6 +2112,60 @@ function buildNotes() {
   // CRAM output
   if (S.outFmt === 'cram' && !info.quantOnly && !info.graphOutput) {
     notes.push({ type: 'warn', text: '<strong>CRAM needs the exact reference:</strong> CRAM stores reads as differences from the reference, so the <em>identical</em> FASTA (same contigs and sequence, matched by the @SQ <code>M5</code> checksums) is needed to decode it later. Archive the FASTA with the CRAM, or point <code>REF_PATH</code>/<code>REF_CACHE</code> at it; most tools take it via <code>--reference</code>/<code>-T</code> (mosdepth: <code>--fasta</code>).' + (bamPost && S.flagstat ? ' <code>samtools flagstat</code> has no <code>--reference</code> option and locates the FASTA through the header\'s <code>UR</code>/<code>M5</code> tags, so keep it at the same path or set <code>REF_PATH</code>.' : '') });
+  }
+
+  /* ---------- Reference genome guidance (#19) ---------- */
+  const rp     = refPresetKey();
+  const preset = REF_PRESETS[rp];
+  const isRna  = S.expType === 'rna' || (info.rna && !info.dna);
+  const refPath = String(S.ref || 'reference.fa').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const refName = `<code>${refPath}</code>`;
+
+  // GRCh38 full assembly: ALT contigs duplicate ~60 Mb of the primary assembly
+  if (preset.alts && !info.quantOnly) {
+    const altBase = '<strong>GRCh38 ALT contigs:</strong> the full assembly carries ~109 Mb of ALT haplotypes that are near-identical to ~60 Mb of the primary chromosomes. ';
+    if (al === 'bwa-mem2' || al === 'bwa-mem') {
+      notes.push({ type: 'warn', text: altBase + `${info.label} is ALT-aware <em>only</em> if an ALT list sits next to the index as <code>${refPath}.alt</code> (the Broad bundle ships it as <code>Homo_sapiens_assembly38.fasta.64.alt</code>; rename it to match). Without it, reads in ALT-duplicated regions get MAPQ 0 and are lost to variant callers. For best MAPQ, post-process with <code>bwa-postalt.js</code> from <a href="https://github.com/lh3/bwa/blob/master/README-alt.md" target="_blank">bwakit</a>. Otherwise use the no-alt analysis set.` });
+    } else if (al === 'dragen') {
+      notes.push({ type: 'info', text: altBase + 'DRAGEN handles them in the hash table: recent versions mask ALT regions by default (<code>--ht-mask-bed</code>), older ones lift ALT hits over with <code>--ht-alt-liftover</code>, and multigenome (graph) hash tables model population haplotypes. Avoid <code>--ht-alt-aware-validate=false</code>: it silences the check but MAPQ suffers. Use Illumina\'s prebuilt GRCh38 hash tables where possible.' });
+    } else if (!REF_ALT_AWARE.includes(al)) {
+      const mm2 = /^minimap2/.test(al) ? ' minimap2\'s <code>--alt</code> option only down-weights listed ALT contigs; it does not lift hits back to the primary assembly.' : '';
+      notes.push({ type: 'warn', text: altBase + `${info.label} is not ALT-aware, so reads in those regions map equally well twice and get <strong>MAPQ 0</strong> (or are split between copies), hiding variants and depressing counts.${mm2} Use the <strong>GRCh38 no-alt analysis set</strong> (<code>GCA_000001405.15_GRCh38_no_alt_analysis_set</code>), which drops the ALTs and masks the duplicated PAR/centromeric copies.` });
+    }
+  }
+
+  // T2T-CHM13
+  if (rp === 't2t') {
+    const lr = ['pacbio','ont','longrna'].includes(S.tech);
+    notes.push({ type: 'info', text: '<strong>T2T-CHM13v2.0:</strong> gap-free, so it adds ~200 Mb of sequence (centromeres, rDNA arrays, segmental duplications) and fixes GRCh38 false duplications' + (lr ? ' — long reads benefit most, since they can span these repeats.' : '; short reads gain less in the newly resolved repeats.') + ' Caveats: annotation (GENCODE/RefSeq via Liftoff), dbSNP/gnomAD/ClinVar and most panels/BEDs are <em>lifted over</em> from GRCh38 rather than native, and many clinical pipelines still assume GRCh38 — keep the <a href="https://github.com/marbl/CHM13" target="_blank">CHM13 ↔ GRCh38 chain files</a> handy. For short-read variant calling use the chrY-PAR-masked FASTA (<code>chm13v2.0_maskedY_rCRS.fa</code>, the preset filename).' });
+  }
+
+  // RNA: genome FASTA, transcriptome and GTF must share one source/release
+  if (isRna) {
+    const quant = info.quantOnly;
+    const src = rp === 'grcm39'
+      ? `GENCODE mouse (${quant ? '<code>gencode.vM*.transcripts.fa</code>' : '<code>GRCm39.primary_assembly.genome.fa</code>'} + <code>gencode.vM*.primary_assembly.annotation.gtf</code>)`
+      : 'GENCODE (<code>chr1</code> names) or Ensembl (<code>1</code> names, <code>primary_assembly</code> not <code>toplevel</code>)';
+    let txt = `<strong>Match FASTA and GTF:</strong> take the ${quant ? 'transcriptome FASTA, GTF (for tx2gene) and any decoy genome' : 'genome FASTA and GTF'} from the <em>same</em> source and release — ${src}. Mixing them (${quant ? 'e.g. GENCODE <code>ENST…|…</code> FASTA headers with an Ensembl GTF' : 'e.g. a GENCODE/UCSC-style <code>chr1</code> FASTA with an Ensembl <code>1</code> GTF'}) ${quant ? 'breaks tx2gene summarisation (transcript IDs/versions no longer match)' : 'is a classic cause of STAR/HISAT2 annotation errors and zero counts in featureCounts/htseq-count'}.`;
+    if (rp === 'grch38_noalt' || rp === 'grch38_full') txt += ' The NCBI analysis sets use UCSC-style <code>chr</code> names, matching GENCODE GTFs.';
+    if (rp === 't2t') txt += ' For T2T, use the CHM13 Liftoff/CAT GENCODE annotation from the same release as the FASTA.';
+    if (al === 'salmon') txt += ' For a <strong>decoy-aware Salmon index</strong>, concatenate transcriptome + genome into a "gentrome" and list the genome contig names in <code>decoys.txt</code> (<code>salmon index -t gentrome.fa.gz -d decoys.txt</code>); this cuts spurious mappings from unannotated genomic sequence.';
+    else if (al === 'kallisto') txt += ' kallisto ≥0.50 can take the genome as a <code>--d-list</code> to mask k-mers shared with off-target sequence (the analogue of Salmon decoys).';
+    notes.push({ type: 'info', text: txt });
+  }
+
+  // Where to download the selected preset
+  if (rp !== 'custom') {
+    const SRC = {
+      grch38_noalt: '<a href="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.15_GRCh38/seqs_for_alignment_pipelines.ucsc_ids/" target="_blank">NCBI analysis sets</a>: <code>GCA_000001405.15_GRCh38_no_alt_analysis_set.fna.gz</code> (or <code>…_no_alt_plus_hs38d1_analysis_set</code> to add decoys; prebuilt BWA/Bowtie2/HISAT2 indexes alongside).',
+      grch38_full:  'Broad/GATK bundle <code>gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta</code> (ALT + decoy + HLA, with <code>.64.alt</code>), or the <a href="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.15_GRCh38/seqs_for_alignment_pipelines.ucsc_ids/" target="_blank">NCBI</a> <code>…_full_analysis_set</code> (its <code>.bwa_index.tar.gz</code> includes the <code>.alt</code> file).',
+      t2t:          '<a href="https://github.com/marbl/CHM13" target="_blank">marbl/CHM13</a> (FASTA, annotation, variant resources and liftover chains), or <a href="https://hgdownload.soe.ucsc.edu/goldenPath/hs1/bigZips/" target="_blank">UCSC hs1</a>.',
+      grcm39:       '<a href="https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/latest_release/" target="_blank">GENCODE mouse</a> (FASTA + matching GTF) or <a href="https://ftp.ensembl.org/pub/current_fasta/mus_musculus/dna/" target="_blank">Ensembl</a> (<code>primary_assembly</code>).',
+    };
+    let txt = `<strong>Download:</strong> ${SRC[rp]}`;
+    if (preset.human && isRna) txt += ' Matching human annotation: <a href="https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/latest_release/" target="_blank">GENCODE human</a>.';
+    if (S.ref !== preset.file && !info.quantOnly) txt += ` Your FASTA path is ${refName}; make sure it points at this build.`;
+    notes.push({ type: 'info', text: txt });
   }
 
   return notes;
